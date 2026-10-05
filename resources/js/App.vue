@@ -1,0 +1,67 @@
+<script setup>
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { api } from './lib/api';
+import JoinScreen from './components/JoinScreen.vue';
+import BoardList from './components/BoardList.vue';
+import BoardView from './components/BoardView.vue';
+import UserAvatar from './components/UserAvatar.vue';
+import ToastStack from './components/ToastStack.vue';
+
+const me = ref(null);
+const ready = ref(false);
+const boardId = ref(parseRoute());
+
+function parseRoute() {
+    const match = window.location.hash.match(/^#\/boards\/(\d+)/);
+    return match ? Number(match[1]) : null;
+}
+
+function onHashChange() {
+    boardId.value = parseRoute();
+}
+
+async function logout() {
+    await api('POST', '/logout');
+    // The session (and its CSRF token) is gone, and Echo's socket is
+    // authenticated as the old user: a full reload resets both cleanly.
+    window.location.hash = '';
+    window.location.reload();
+}
+
+onMounted(async () => {
+    window.addEventListener('hashchange', onHashChange);
+    const { user } = await api('GET', '/api/me');
+    me.value = user;
+    ready.value = true;
+});
+
+onBeforeUnmount(() => window.removeEventListener('hashchange', onHashChange));
+</script>
+
+<template>
+    <div class="flex h-full flex-col">
+        <header class="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900">
+            <a href="#/" class="flex items-center gap-2 font-semibold tracking-tight">
+                <span class="grid size-7 place-items-center rounded-md bg-indigo-600 text-sm text-white">K</span>
+                <span>Kanban Live</span>
+            </a>
+            <div v-if="me" class="ml-auto flex items-center gap-2 text-sm">
+                <UserAvatar :user="me" size="sm" />
+                <span class="hidden sm:inline">{{ me.name }}</span>
+                <button class="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" @click="logout">
+                    Sign out
+                </button>
+            </div>
+        </header>
+
+        <main class="min-h-0 flex-1">
+            <template v-if="ready">
+                <JoinScreen v-if="!me" />
+                <BoardView v-else-if="boardId" :key="boardId" :board-id="boardId" :me="me" />
+                <BoardList v-else />
+            </template>
+        </main>
+
+        <ToastStack />
+    </div>
+</template>
