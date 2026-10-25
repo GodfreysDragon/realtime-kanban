@@ -40,9 +40,11 @@ export function useBoard(boardId, me) {
     const status = ref(connection.state);
     const loading = ref(true);
     const error = ref(null);
+    const channelError = ref(null);
 
     let pending = [];
     let loadSeq = 0;
+    let disposed = false;
     let myEditingCardId = null;
 
     const sortedColumns = computed(() => Object.values(columns).sort(byPosition));
@@ -136,8 +138,7 @@ export function useBoard(boardId, me) {
             delete dragging[user.id];
         })
         .error((e) => {
-            loading.value = false;
-            error.value = e?.status === 403 ? 'You are not allowed to join this board.' : 'Could not join the live channel.';
+            channelError.value = e?.status === 403 ? 'You are not allowed to join this board.' : 'Could not join the live channel.';
         })
         .listen('.card.created', buffered(({ card }) => upsertCard(card)))
         .listen('.card.updated', buffered(({ card }) => upsertCard(card)))
@@ -179,6 +180,9 @@ export function useBoard(boardId, me) {
     }
 
     function whisper(event, payload) {
+        // Whispers need a live subscription. The card dialog clears its
+        // "editing" flag on unmount, which can run after dispose() has left.
+        if (disposed || !channel.subscription?.subscribed) return;
         channel.whisper(event, { userId: me.id, ...payload });
     }
 
@@ -200,6 +204,7 @@ export function useBoard(boardId, me) {
     }, 2000);
 
     function dispose() {
+        disposed = true;
         clearInterval(staleCursorTimer);
         connection.unbind('state_change', onStateChange);
         echo.leave(channelName);
@@ -312,7 +317,9 @@ export function useBoard(boardId, me) {
         status,
         loading,
         error,
+        channelError,
         load,
+        applyCard: upsertCard,
         dispose,
         createCard,
         updateCard,

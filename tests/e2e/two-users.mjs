@@ -142,10 +142,26 @@ await step('reconnect: Bob goes offline, misses a change, then re-syncs', async 
     await card(b, 'Made while Bob was offline').waitFor({ timeout: 8000 });
 });
 
-await step('delete propagates', async () => {
+await step('keyboard: Enter opens a card, Tab stays in the dialog, Escape returns focus', async () => {
+    await card(a, 'Made while Bob was offline').focus();
+    await a.keyboard.press('Enter');
+    await a.waitForSelector('[role=dialog]');
+    for (let i = 0; i < 15; i++) await a.keyboard.press('Tab');
+    if (!(await a.evaluate(() => !!document.activeElement.closest('[role=dialog]')))) throw new Error('focus left the dialog');
+    await a.keyboard.press('Escape');
+    await a.waitForSelector('[role=dialog]', { state: 'detached' });
+    if (!(await a.evaluate(() => document.activeElement?.hasAttribute('data-card-id')))) throw new Error('focus did not return to the card');
+});
+
+await step('delete propagates and closes the dialog Bob has open', async () => {
+    await card(b, 'Made while Bob was offline').click();
+    await b.waitForSelector('[role=dialog]');
     await card(a, 'Made while Bob was offline').click();
     await a.click('[role=dialog] >> text=Delete');
     await card(b, 'Made while Bob was offline').waitFor({ state: 'detached', timeout: 5000 });
+    await b.waitForSelector('[role=dialog]', { state: 'detached', timeout: 5000 });
+    await b.locator('text=That card was deleted by someone else.').waitFor({ timeout: 5000 });
+    if (await a.locator('text=That card was deleted by someone else.').count()) throw new Error('the deleter was told someone else deleted it');
 });
 
 await a.mouse.move(700, 300);
