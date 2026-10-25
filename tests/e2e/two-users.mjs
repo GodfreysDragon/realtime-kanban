@@ -5,7 +5,8 @@
  *   npm run test:e2e                      # E2E_URL defaults to http://127.0.0.1:8000
  *
  * Uses an installed Edge or Chrome (E2E_BROWSER=msedge|chrome) via playwright-core,
- * so no browser download is needed. Screenshots go to storage/e2e.
+ * so no browser download is needed. E2E_BROWSER_PATH points it at any other
+ * Chromium binary instead. Screenshots go to storage/e2e.
  */
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright-core';
@@ -25,7 +26,12 @@ async function step(name, fn) {
     }
 }
 
-const browser = await chromium.launch({ channel: process.env.E2E_BROWSER ?? 'msedge', headless: true });
+const browser = await chromium.launch({
+    ...(process.env.E2E_BROWSER_PATH
+        ? { executablePath: process.env.E2E_BROWSER_PATH }
+        : { channel: process.env.E2E_BROWSER ?? 'msedge' }),
+    headless: true,
+});
 const ctxA = await browser.newContext({ viewport: { width: 1400, height: 850 } });
 const ctxB = await browser.newContext({ viewport: { width: 1400, height: 850 } });
 const a = await ctxA.newPage();

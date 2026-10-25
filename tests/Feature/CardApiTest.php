@@ -220,6 +220,55 @@ class CardApiTest extends TestCase
         });
     }
 
+    public function test_a_move_broadcasts_an_edit_saved_while_it_was_in_flight(): void
+    {
+        $moving = $this->card($this->todo, 1000, ['title' => 'Before']);
+        $this->interleaveOnRetrieve($moving->id, fn () => Card::whereKey($moving->id)->update(['title' => 'After', 'version' => 2]));
+
+        $this->patchJson("/api/cards/{$moving->id}/move", ['column_id' => $this->done->id, 'after_id' => null])
+            ->assertOk()
+            ->assertJsonPath('data.title', 'After')
+            ->assertJsonPath('data.version', 2);
+
+        // Clients ignore card events older than their copy, so a move carrying
+        // the stale version 1 would be dropped by everyone who saw the edit.
+        Event::assertDispatched(CardMoved::class, fn (CardMoved $event) => $event->card->version === 2
+            && $event->card->title === 'After'
+            && $event->card->column_id === $this->done->id);
+    }
+
+    public function test_a_rebalance_leaves_a_card_that_was_moved_out_concurrently_alone(): void
+    {
+        $a = $this->card($this->done, 1.0);
+        $b = $this->card($this->done, 1.0 + 1e-9);
+        $moving = $this->card($this->todo, 1000);
+        $this->interleaveOnRetrieve($b->id, fn () => Card::whereKey($b->id)->update(['column_id' => $this->todo->id, 'position' => 5000]));
+
+        $this->patchJson("/api/cards/{$moving->id}/move", ['column_id' => $this->done->id, 'after_id' => $a->id])
+            ->assertOk();
+
+        $this->assertSame(5000.0, $b->fresh()->position);
+        Event::assertDispatched(ColumnRebalanced::class, fn (ColumnRebalanced $event) => $event->positions === [$a->id => CardPositioner::GAP]);
+    }
+
+    /**
+     * Run $write the first time card $id is read from the database, standing
+     * in for another request that commits between our read and our write.
+     */
+    private function interleaveOnRetrieve(int $id, callable $write): void
+    {
+        Event::fakeExcept('eloquent.retrieved: '.Card::class);
+
+        $done = false;
+        Card::retrieved(function (Card $card) use ($id, $write, &$done) {
+            if ($done || $card->id !== $id) {
+                return;
+            }
+            $done = true;
+            $write();
+        });
+    }
+
     public function test_cannot_move_a_card_to_another_boards_column(): void
     {
         $moving = $this->card($this->todo, 1000);

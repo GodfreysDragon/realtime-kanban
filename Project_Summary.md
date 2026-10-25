@@ -1,6 +1,6 @@
 # Project Summary: Kanban Live (Real-time Collaborative Kanban)
 
-_Last updated: 2026-10-04_
+_Last updated: 2026-10-25_
 
 ## What it is
 
@@ -57,9 +57,9 @@ Tailwind 4 · SQLite (any Laravel database works)
 - A connection status indicator, a live activity feed, toasts, a responsive layout and automatic dark mode.
 
 ### Quality
-- **30 PHPUnit feature tests (173 assertions)**. They cover broadcast channel, name, payload and socket exclusion;
-  presence-auth signing against the real `/broadcasting/auth` endpoint; version conflicts; positioning edge cases; and a
-  60-drop stress test that forces a rebalance.
+- **32 PHPUnit feature tests (180 assertions)**. They cover broadcast dispatch, payloads and socket exclusion;
+  presence-auth signing against the real `/broadcasting/auth` endpoint; version conflicts; positioning edge cases; races
+  where another request commits mid-move; and a 60-drop stress test that forces a rebalance.
 - **12-step two-browser end-to-end test** (`npm run test:e2e`). It runs headless Edge through `playwright-core` against
   a live Reverb server.
 - Code formatted with Pint. A demo seeder creates a sample board.
@@ -68,7 +68,7 @@ Tailwind 4 · SQLite (any Laravel database works)
 
 | Area | Status |
 |---|---|
-| PHPUnit suite | ✅ 30/30 passing |
+| PHPUnit suite | ✅ 32/32 passing |
 | Two users over real Reverb WebSockets: presence, create, drag-move, cursors, editing badges, activity, delete | ✅ Verified (e2e, headless Edge) |
 | Concurrent edit → 409 → resolution UI | ✅ Verified end to end |
 | Disconnect → missed change → reconnect → resync | ✅ Verified end to end |
