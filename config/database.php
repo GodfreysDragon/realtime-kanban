@@ -41,7 +41,10 @@ return [
             'busy_timeout' => null,
             'journal_mode' => null,
             'synchronous' => null,
-            'transaction_mode' => 'DEFERRED',
+            // lockForUpdate() is a no-op on SQLite, so take the write lock when
+            // a transaction starts instead; concurrent moves then queue up
+            // rather than failing with "database is locked".
+            'transaction_mode' => 'IMMEDIATE',
         ],
 
         'mysql' => [

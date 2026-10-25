@@ -30,14 +30,20 @@ class CardController extends Controller
 
     public function store(StoreCardRequest $request, Column $column): JsonResponse
     {
-        $card = DB::transaction(fn () => Card::create([
-            ...$request->validated(),
-            'board_id' => $column->board_id,
-            'column_id' => $column->id,
-            'position' => $this->positioner->endOf($column->id),
-            'created_by' => $request->user()->id,
-            'updated_by' => $request->user()->id,
-        ]))->refresh();
+        $card = DB::transaction(function () use ($request, $column) {
+            // Same lock as move(): two cards added at once can't read the same
+            // max position, and an add can't interleave with a rebalance.
+            Column::whereKey($column->id)->lockForUpdate()->first();
+
+            return Card::create([
+                ...$request->validated(),
+                'board_id' => $column->board_id,
+                'column_id' => $column->id,
+                'position' => $this->positioner->endOf($column->id),
+                'created_by' => $request->user()->id,
+                'updated_by' => $request->user()->id,
+            ]);
+        })->refresh();
 
         broadcast(new CardCreated($card))->toOthers();
         $this->activity->record($card->board_id, $request->user(), 'card.created', "added “{$this->short($card->title)}” to {$column->name}");
