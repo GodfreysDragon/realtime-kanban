@@ -16,10 +16,12 @@ const CURSOR_TTL_MS = 10_000;
  *  - This tab's own changes are applied optimistically and then replaced by
  *    the server's response. The server leaves this tab out of the broadcast
  *    (X-Socket-ID plus toOthers), so nothing is applied twice.
- *  - Events are buffered while a snapshot is loading and replayed after it,
- *    so nothing sent between "snapshot taken" and "snapshot applied" is lost.
- *  - After a reconnect the snapshot is fetched again, because Pusher-protocol
- *    servers don't replay messages missed while offline.
+ *  - The snapshot is fetched straight away for a fast first paint, and again
+ *    once the channel subscription succeeds: events sent before that moment
+ *    never reach us, so only a snapshot taken after it is complete. Events
+ *    are buffered while a snapshot loads and replayed after it.
+ *  - Pusher-protocol servers don't replay messages missed while offline, but
+ *    every reconnect re-subscribes, so the same hook re-fetches the snapshot.
  *  - Ephemeral state (cursors, who is editing or dragging which card) never
  *    touches the server. It travels as client "whispers" between browsers.
  */
@@ -40,6 +42,7 @@ export function useBoard(boardId, me) {
     const error = ref(null);
 
     let pending = [];
+    let loadSeq = 0;
     let myEditingCardId = null;
 
     const sortedColumns = computed(() => Object.values(columns).sort(byPosition));
@@ -74,24 +77,30 @@ export function useBoard(boardId, me) {
         activities.value = [activity, ...activities.value].slice(0, 50);
     }
 
+    /** Fetch the snapshot. If loads overlap, only the latest one is applied. */
     async function load() {
+        const seq = ++loadSeq;
         loading.value = true;
         pending = [];
 
         try {
             const { data } = await api('GET', `/api/boards/${boardId}`);
+            if (seq !== loadSeq) return;
             board.value = { id: data.id, name: data.name };
             replace(columns, data.columns);
             replace(cards, data.cards);
             activities.value = data.activities;
             error.value = null;
         } catch (e) {
+            if (seq !== loadSeq) return;
             error.value = e.status === 404 ? 'This board does not exist.' : e.message;
         } finally {
-            loading.value = false;
-            const replay = pending;
-            pending = [];
-            replay.forEach((apply) => apply());
+            if (seq === loadSeq) {
+                loading.value = false;
+                const replay = pending;
+                pending = [];
+                replay.forEach((apply) => apply());
+            }
         }
     }
 
@@ -109,7 +118,12 @@ export function useBoard(boardId, me) {
 
     const channel = echo
         .join(channelName)
-        .here((users) => (members.value = users))
+        // Fires on the first subscription and again after every reconnect.
+        .here((users) => {
+            members.value = users;
+            forgetSignalsFromAbsentMembers(users);
+            load();
+        })
         .joining((user) => {
             members.value = [...members.value.filter((m) => m.id !== user.id), user];
             // Newcomers can't know what we're doing until we tell them.
@@ -122,6 +136,7 @@ export function useBoard(boardId, me) {
             delete dragging[user.id];
         })
         .error((e) => {
+            loading.value = false;
             error.value = e?.status === 403 ? 'You are not allowed to join this board.' : 'Could not join the live channel.';
         })
         .listen('.card.created', buffered(({ card }) => upsertCard(card)))
@@ -148,6 +163,16 @@ export function useBoard(boardId, me) {
         .listenForWhisper('editing', ({ userId, cardId }) => setOrClear(editing, userId, cardId))
         .listenForWhisper('dragging', ({ userId, cardId }) => setOrClear(dragging, userId, cardId));
 
+    /** People who left while we were offline never sent us "leaving"; drop their cursors and badges. */
+    function forgetSignalsFromAbsentMembers(users) {
+        const present = new Set(users.map((user) => String(user.id)));
+        for (const map of [cursors, editing, dragging]) {
+            for (const userId of Object.keys(map)) {
+                if (!present.has(userId)) delete map[userId];
+            }
+        }
+    }
+
     function setOrClear(map, userId, value) {
         if (value == null) delete map[userId];
         else map[userId] = value;
@@ -161,10 +186,8 @@ export function useBoard(boardId, me) {
     function onStateChange({ current }) {
         status.value = current;
         if (current !== 'connected') return;
-        if (everConnected) {
-            toast('Reconnected. Re-syncing the board.');
-            load();
-        }
+        // The snapshot itself is re-fetched by .here() once re-subscribed.
+        if (everConnected) toast('Reconnected. Re-syncing the board.');
         everConnected = true;
     }
     connection.bind('state_change', onStateChange);
