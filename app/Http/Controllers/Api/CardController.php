@@ -100,6 +100,11 @@ class CardController extends Controller
                 'position' => $placement['position'],
             ]);
 
+            // The route-bound model was read before the transaction, so an edit
+            // saved in the meantime isn't in it. Clients drop card events older
+            // than the version they hold, so broadcast the row as it is now.
+            $card->refresh();
+
             return $placement['rebalanced'];
         });
 

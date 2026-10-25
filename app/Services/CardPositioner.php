@@ -58,7 +58,7 @@ class CardPositioner
             return ['position' => $position, 'rebalanced' => null];
         }
 
-        return $this->rebalance($siblings->pluck('id')->all(), $index);
+        return $this->rebalance($siblings->pluck('id')->all(), $index, $columnId);
     }
 
     /**
@@ -90,13 +90,18 @@ class CardPositioner
      * @param  array<int, int>  $orderedIds
      * @return array{position: float, rebalanced: array<int, float>}
      */
-    private function rebalance(array $orderedIds, int $index): array
+    private function rebalance(array $orderedIds, int $index, int $columnId): array
     {
         $positions = [];
 
         foreach ($orderedIds as $i => $id) {
-            $positions[$id] = ($i < $index ? $i + 1 : $i + 2) * self::GAP;
-            Card::whereKey($id)->update(['position' => $positions[$id]]);
+            $position = ($i < $index ? $i + 1 : $i + 2) * self::GAP;
+
+            // Scoped to the column: a sibling someone else has just moved out
+            // keeps its new place and is left out of the broadcast.
+            if (Card::whereKey($id)->where('column_id', $columnId)->update(['position' => $position])) {
+                $positions[$id] = $position;
+            }
         }
 
         return ['position' => ($index + 1) * self::GAP, 'rebalanced' => $positions];
