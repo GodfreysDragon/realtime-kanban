@@ -1,8 +1,25 @@
 # Kanban Live
 
+[![CI](https://github.com/GodfreysDragon/realtime-kanban/actions/workflows/ci.yml/badge.svg)](https://github.com/GodfreysDragon/realtime-kanban/actions/workflows/ci.yml)
+
 A real-time collaborative Kanban board built with **Laravel 13, Laravel Reverb (WebSockets), Laravel Echo and Vue 3**.
 Open it in two browsers and every change shows up in both instantly: cards, moves, edits, who's online, where their
 cursor is, and what they're editing.
+
+![Three people on one board: Grace is editing "Press kit" and Linus's cursor is visible](docs/screenshot-board.png)
+
+<details>
+<summary>More screenshots</summary>
+
+Grace's view while she edits the card, with Ada's cursor:
+
+![The card dialog](docs/screenshot-editing.png)
+
+Phone width:
+
+<img src="docs/screenshot-mobile.png" alt="The board at phone width" width="320">
+
+</details>
 
 ## Running it
 
@@ -96,10 +113,14 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - editing badges;
   - the full 409 conflict flow;
   - disconnect → missed event → reconnect → resync;
-  - delete propagation.
+  - keyboard: Enter opens a card, focus stays in the dialog, Escape returns focus to the card;
+  - delete propagation, including closing the dialog of someone who had the card open.
 
   Set `E2E_URL` if the app isn't on `http://127.0.0.1:8000`, and `E2E_BROWSER_PATH` to use a Chromium binary other
   than an installed Edge or Chrome. Screenshots land in `storage/e2e/`.
+
+Both suites run in GitHub Actions on every push (`.github/workflows/ci.yml`). The e2e job builds the assets and
+starts Reverb and the app server first.
 
 ## Simplifications
 
@@ -110,3 +131,7 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   in `routes/channels.php` and in a policy.
 - **Drag and drop uses the native HTML5 API**, which touch screens don't support. On mobile, cards can be moved with the
   *Column* select in the card dialog.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

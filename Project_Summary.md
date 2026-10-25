@@ -60,8 +60,9 @@ Tailwind 4 · SQLite (any Laravel database works)
 - **32 PHPUnit feature tests (180 assertions)**. They cover broadcast dispatch, payloads and socket exclusion;
   presence-auth signing against the real `/broadcasting/auth` endpoint; version conflicts; positioning edge cases; races
   where another request commits mid-move; and a 60-drop stress test that forces a rebalance.
-- **12-step two-browser end-to-end test** (`npm run test:e2e`). It runs headless Edge through `playwright-core` against
-  a live Reverb server.
+- **14-step two-browser end-to-end test** (`npm run test:e2e`). It runs headless Edge or Chrome through
+  `playwright-core` against a live Reverb server.
+- **GitHub Actions** runs PHPUnit, Pint and the end-to-end test on every push.
 - Code formatted with Pint. A demo seeder creates a sample board.
 
 ## Verification status
@@ -72,6 +73,7 @@ Tailwind 4 · SQLite (any Laravel database works)
 | Two users over real Reverb WebSockets: presence, create, drag-move, cursors, editing badges, activity, delete | ✅ Verified (e2e, headless Edge) |
 | Concurrent edit → 409 → resolution UI | ✅ Verified end to end |
 | Disconnect → missed change → reconnect → resync | ✅ Verified end to end |
+| Keyboard: open a card, focus kept in the dialog and returned on close | ✅ Verified end to end |
 | Desktop and phone-width layout | ✅ Checked with screenshots |
 | Touch drag and drop | ⚠️ Not supported (native HTML5 DnD). The column select in the card dialog works on touch |
 | Multi-server Reverb scaling (Redis pub/sub) | ⚠️ Not configured. Reverb supports it via `REVERB_SCALING_ENABLED` |
