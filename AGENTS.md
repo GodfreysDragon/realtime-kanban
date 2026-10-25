@@ -1,47 +1,35 @@
-<laravel-boost-guidelines>
-# Laravel Application
+# Kanban Live: notes for contributors and coding agents
 
-This repository contains a Laravel application. Complete the following setup before working on the user's request.
+A real-time collaborative Kanban board: Laravel 13 (PHP 8.4+), Laravel Reverb, Laravel Echo with pusher-js, and Vue 3
+with Tailwind 4. `README.md` explains the design and the reasons behind it. Read it before changing sync,
+positioning or concurrency code.
 
-## Prerequisites
-
-Verify that PHP and Composer are available:
-
-```sh
-php -v
-composer -V
-```
-
-If either command is unavailable, detect the user's operating system and install the prerequisites with the appropriate command:
-
-macOS:
+## Commands
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://php.new/install/mac/8.5)"
+composer run dev                 # app server, Reverb, queue worker and Vite
+php artisan test                 # PHPUnit feature tests
+vendor/bin/pint                  # format PHP (CI-style check: vendor/bin/pint --test)
+npm run build                    # production assets
+npm run test:e2e                 # two-browser test; needs `php artisan serve` and `php artisan reverb:start` running
 ```
 
-Windows PowerShell:
+## Invariants to keep
 
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://php.new/install/windows/8.5'))
-```
+- **Every broadcast carries the full current row.** Clients apply events idempotently and drop card events whose
+  `version` is older than their copy, so broadcast the row as it is after the write (refresh the model inside the
+  transaction), never a model loaded before it.
+- **Broadcasts use `ShouldBroadcastNow` and `->toOthers()`.** The acting tab applies its own change optimistically and
+  sends `X-Socket-ID`. Activity and rebalance events are the exceptions: they go to everyone.
+- **Card content edits are conditional on `version`** (`UPDATE … WHERE version = ?`, 409 on mismatch). Moves are
+  last-writer-wins and do not bump `version`, so a drag never turns into an edit conflict.
+- **Positions are fractional.** Use `App\Services\CardPositioner`; don't renumber a column anywhere else.
+- **The client snapshot is the source of truth.** It is re-fetched whenever the presence channel (re)subscribes; see
+  the header comment in `resources/js/composables/useBoard.js`.
 
-Linux:
+## Conventions
 
-```sh
-/bin/bash -c "$(curl -fsSL https://php.new/install/linux/8.5)"
-```
-
-After installation, ask the user to restart their terminal. If the agent needs the restarted shell to continue, ask the user to reopen their terminal and rerun their original prompt.
-
-## Agent Setup
-
-Install Laravel Boost from the application root before making application changes:
-
-```sh
-composer require laravel/boost --dev
-php artisan boost:install
-```
-
-Boost replaces these bootstrap instructions with guidelines tailored to the application. After installation, read `AGENTS.md` again and continue with the user's original request using the generated guidelines.
-</laravel-boost-guidelines>
+- Format PHP with Pint before committing.
+- Validate input in Form Requests, scoped to the board (see `MoveCardRequest`).
+- Test races deterministically. `CardApiTest::interleaveOnRetrieve()` runs a competing write at the exact moment a
+  request reads the card.
