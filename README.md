@@ -6,7 +6,7 @@ cursor is, and what they're editing.
 
 ## Running it
 
-Requirements: PHP 8.3+, Composer, Node 20+.
+Requirements: PHP 8.4+, Composer, Node 20+.
 
 ```sh
 composer install
@@ -36,9 +36,11 @@ If you run the processes by hand, the two that matter are `php artisan serve` an
 
 ### Sync model
 The REST snapshot (`GET /api/boards/{id}`) is the source of truth. Every server event carries the **full row** rather
-than a diff, so applying an event is idempotent and replays are harmless. While a snapshot is loading, incoming events
-are buffered and replayed after it, so a change made between "snapshot taken" and "snapshot applied" isn't lost.
-Pusher-protocol servers don't replay missed messages, so after a reconnect the client simply fetches the snapshot again.
+than a diff, so applying an event is idempotent and replays are harmless. The snapshot is fetched once straight away for a fast
+first paint and again when the channel subscription succeeds, because only a snapshot taken after that moment is
+guaranteed not to miss an event. While a snapshot is loading, incoming events are buffered and replayed after it, and if
+loads overlap only the newest is applied. Pusher-protocol servers don't replay missed messages, but every reconnect
+re-subscribes, so the same hook fetches the snapshot again.
 
 ### No echo of your own changes
 The client applies its own changes optimistically. Every API call sends `X-Socket-ID`, and the server broadcasts with
@@ -70,15 +72,17 @@ high-traffic deployment would use a single ordered queue or a per-board sequence
 ## Tests
 
 ```sh
-php artisan test          # 30 PHPUnit feature tests
+php artisan test          # 32 PHPUnit feature tests
 npm run test:e2e          # two headless browsers against a running app + Reverb (see below)
 ```
 
 - **PHPUnit** covers:
   - auth;
   - board, column and card CRUD;
-  - every broadcast's channel, name, payload and `toOthers` socket;
+  - broadcast dispatch, payloads and `toOthers` socket exclusion;
   - version conflicts;
+  - races where another request commits mid-move, reproduced deterministically by hooking Eloquent's `retrieved`
+    event;
   - fractional positioning, including a 60-drop stress test that forces a rebalance;
   - cross-board validation;
   - real `/broadcasting/auth` presence signing with the Reverb driver.
@@ -94,7 +98,8 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - disconnect → missed event → reconnect → resync;
   - delete propagation.
 
-  Set `E2E_URL` if the app isn't on `http://127.0.0.1:8000`. Screenshots land in `storage/e2e/`.
+  Set `E2E_URL` if the app isn't on `http://127.0.0.1:8000`, and `E2E_BROWSER_PATH` to use a Chromium binary other
+  than an installed Edge or Chrome. Screenshots land in `storage/e2e/`.
 
 ## Simplifications
 
