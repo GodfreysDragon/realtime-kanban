@@ -17,7 +17,7 @@ The project is about real-time, stateful work beyond plain request and response:
 **Stack:** Laravel 13 · PHP 8.4 · Laravel Reverb (WebSocket server, Pusher protocol) · Laravel Echo + pusher-js · Vue 3 ·
 Tailwind 4 · SQLite (any Laravel database works)
 
-![Three people on one board: Grace is editing "Press kit" and Linus's cursor is visible](docs/screenshot-board.png)
+![Three people on one board: Grace is editing "Press kit" while Linus drags "Fix signup email bounce", and his cursor is visible](docs/screenshot-board.png)
 
 <details>
 <summary>More screenshots</summary>
@@ -25,6 +25,10 @@ Tailwind 4 · SQLite (any Laravel database works)
 Grace's view while she edits the card, with Ada's cursor:
 
 ![The card dialog](docs/screenshot-editing.png)
+
+Sharing a private board: the invite link and its members:
+
+![The Share dialog](docs/screenshot-share.png)
 
 Phone width:
 
