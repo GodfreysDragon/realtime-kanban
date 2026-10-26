@@ -1,8 +1,36 @@
 # Kanban Live
 
+[![CI](https://github.com/GodfreysDragon/realtime-kanban/actions/workflows/ci.yml/badge.svg)](https://github.com/GodfreysDragon/realtime-kanban/actions/workflows/ci.yml)
+
 A real-time collaborative Kanban board built with **Laravel 13, Laravel Reverb (WebSockets), Laravel Echo and Vue 3**.
 Open it in two browsers and every change shows up in both instantly: cards, moves, edits, who's online, where their
-cursor is, and what they're editing.
+cursor is, and what they're editing. When two people edit the same card, the app catches it and asks the second person
+how to resolve the conflict.
+
+The project is about real-time, stateful work beyond plain request and response:
+- presence;
+- client-to-client messages;
+- optimistic UI;
+- concurrency control;
+- recovering after a disconnect.
+
+**Stack:** Laravel 13 · PHP 8.4 · Laravel Reverb (WebSocket server, Pusher protocol) · Laravel Echo + pusher-js · Vue 3 ·
+Tailwind 4 · SQLite (any Laravel database works)
+
+![Three people on one board: Grace is editing "Press kit" and Linus's cursor is visible](docs/screenshot-board.png)
+
+<details>
+<summary>More screenshots</summary>
+
+Grace's view while she edits the card, with Ada's cursor:
+
+![The card dialog](docs/screenshot-editing.png)
+
+Phone width:
+
+<img src="docs/screenshot-mobile.png" alt="The board at phone width" width="320">
+
+</details>
 
 ## Running it
 
@@ -21,6 +49,24 @@ Then open http://localhost:8000 in one browser, open it again in a private windo
 
 If you run the processes by hand, the two that matter are `php artisan serve` and `php artisan reverb:start`.
 
+### If port 8000 is already taken
+`composer run dev` always serves the app on port 8000. If something else is listening there, you may see a different
+site, or a join form that never appears. On Windows `artisan serve` can even bind the same port without an error. Stop
+the other server, or start the processes by hand on a free port:
+
+```sh
+php artisan reverb:start              # WebSockets on 8080
+php artisan serve --port=8010         # then open http://localhost:8010
+npm run dev                           # only when editing frontend code; otherwise run npm run build once
+E2E_URL=http://127.0.0.1:8010 npm run test:e2e
+```
+
+Nothing else needs to change: the WebSocket URL comes from the `REVERB_*` settings, not the app's port.
+
+### Deploying
+Set `REVERB_ALLOWED_ORIGINS` to the comma-separated hosts allowed to open WebSocket connections (for example
+`kanban.example.com`). It defaults to `*`, which is fine locally.
+
 ## What happens in real time
 
 | Feature | Mechanism |
@@ -30,7 +76,7 @@ If you run the processes by hand, the two that matter are `php artisan serve` an
 | Live cursors | Client **whispers** (`client-cursor`), throttled to about 20/s, never touch PHP |
 | "Ada is editing" and "Ada is moving" badges | Whispers (`client-editing`, `client-dragging`) |
 | Activity feed | `activity.recorded` event, sent to everyone including the actor |
-| Connection status and resync | pusher-js `state_change`. After a reconnect the board snapshot is fetched again |
+| Connection status and resync | pusher-js `state_change` drives the badge. Every (re)subscription to the channel fetches the board snapshot again |
 
 ## Design decisions
 
@@ -62,12 +108,29 @@ with *Use theirs* / *Overwrite with mine*. If someone else saves while your dial
 - with no edits of your own, the dialog quietly follows their change;
 - if you've made edits, a banner warns you and your text is kept.
 
-Moves are deliberately last-writer-wins; there is nothing to merge.
+Moves are deliberately last-writer-wins; there is nothing to merge. They don't bump `version`, so dragging a card never
+turns someone else's open edit into a conflict. A move does broadcast the card as it is *after* the write, so an edit
+saved while the move was in flight is never undone on other screens.
+
+### Locking
+Moving or adding a card locks its column row for the length of the transaction, so two writers can't compute positions
+from the same snapshot of the column. A rebalance only renumbers cards that are still in that column, so a card someone
+else just moved out keeps its new place. `lockForUpdate()` does nothing on SQLite, so the SQLite connection starts every
+transaction `IMMEDIATE` instead: concurrent writers queue for the database lock rather than failing with
+"database is locked".
 
 ### Synchronous broadcasts
 Events implement `ShouldBroadcastNow`. Queued broadcasts with several workers can arrive out of order ("moved" before
 "created"), and the cost of handing a message to a local Reverb server inside the request is a few milliseconds. A
 high-traffic deployment would use a single ordered queue or a per-board sequence number instead.
+
+### Keyboard and screen readers
+- Cards open with Enter or Space.
+- The card dialog keeps Tab inside it and returns focus to the card when it closes.
+- Escape, Cancel or a click outside ask before throwing away unsaved edits.
+- Board and column names are renamed through real buttons.
+- Errors after the first load, such as a failed resync or a refused channel connection, appear in a banner with
+  Retry rather than leaving a stale board on screen without saying so.
 
 ## Tests
 
@@ -96,10 +159,14 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - editing badges;
   - the full 409 conflict flow;
   - disconnect → missed event → reconnect → resync;
-  - delete propagation.
+  - keyboard: Enter opens a card, focus stays in the dialog, Escape returns focus to the card;
+  - delete propagation, including closing the dialog of someone who had the card open.
 
   Set `E2E_URL` if the app isn't on `http://127.0.0.1:8000`, and `E2E_BROWSER_PATH` to use a Chromium binary other
   than an installed Edge or Chrome. Screenshots land in `storage/e2e/`.
+
+Both suites run in GitHub Actions on every push (`.github/workflows/ci.yml`). The e2e job builds the assets and
+starts Reverb and the app server first.
 
 ## Simplifications
 
@@ -110,3 +177,16 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   in `routes/channels.php` and in a policy.
 - **Drag and drop uses the native HTML5 API**, which touch screens don't support. On mobile, cards can be moved with the
   *Column* select in the card dialog.
+- **One Reverb server.** Scaling across several servers (Redis pub/sub) isn't configured; Reverb supports it with
+  `REVERB_SCALING_ENABLED`.
+
+## What's next
+
+1. Board membership and invitations: a check in the `board.{board}` channel callback plus a policy on the API.
+2. Column reordering by drag, using the same fractional-index approach.
+3. Touch drag and drop (e.g. SortableJS) and keyboard reordering inside a column.
+4. A per-board event sequence number, so clients can spot gaps and resync without waiting for a reconnect.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

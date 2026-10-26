@@ -51,13 +51,14 @@ function onDragEnd() {
         :class="[dnd.cardId === card.id ? 'opacity-40' : '', busyWith ? 'border-transparent ring-2' : 'border-slate-200 dark:border-slate-700']"
         :style="busyWith ? { '--tw-ring-color': busyWith.color } : null"
         @click="emit('open')"
-        @keydown.enter="emit('open')"
+        @keydown.enter.prevent="emit('open')"
+        @keydown.space.prevent="emit('open')"
         @dragstart="onDragStart"
         @dragend="onDragEnd"
     >
         <span v-if="label" class="mb-1.5 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium" :class="label.soft">{{ label.name }}</span>
         <p class="break-words">{{ card.title }}</p>
-        <p v-if="card.description" class="mt-1 text-xs text-slate-400" aria-label="Has description">≡</p>
+        <p v-if="card.description" class="mt-1 text-xs text-slate-500 dark:text-slate-400" aria-label="Has description">≡</p>
 
         <div
             v-if="busyWith"

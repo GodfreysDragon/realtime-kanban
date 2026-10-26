@@ -1,5 +1,5 @@
 <script setup>
-import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { LABELS } from '../lib/labels';
 import { useToasts } from '../composables/useToasts';
 import UserAvatar from './UserAvatar.vue';
@@ -24,6 +24,8 @@ const remoteEdit = ref(false);
 const conflict = ref(null);
 const saving = ref(false);
 const titleInput = ref(null);
+const dialog = ref(null);
+let returnFocusTo = null;
 
 function resetFrom(source) {
     draft.title = source.title;
@@ -48,15 +50,12 @@ const coEditors = computed(() =>
 
 const lastEditor = computed(() => board.membersById.value[card.value?.updated_by]);
 
-// React to other people's changes while the dialog is open.
+// React to other people's changes while the dialog is open. A remote delete
+// is handled by BoardView, which owns whether the dialog is shown.
 watch(
     () => card.value && { ...card.value },
     (current) => {
-        if (!current) {
-            toast('That card was deleted by someone else.', 'error');
-            emit('close');
-            return;
-        }
+        if (!current) return;
         if (current.version === baseVersion.value) return;
         // Pristine draft: just follow along. Dirty draft: keep the user's
         // text and flag it; the save will hit the version check.
@@ -74,15 +73,18 @@ async function save() {
         await board.updateCard(props.cardId, { title: draft.title.trim(), description: draft.description || null, label: draft.label }, baseVersion.value);
         emit('close');
     } catch (e) {
-        if (e.status === 409) conflict.value = e.data;
-        else toast(e.data?.message ?? 'Could not save the card.', 'error');
+        if (e.status === 409) {
+            conflict.value = e.data;
+            board.applyCard(e.data.card);
+        } else toast(e.data?.message ?? 'Could not save the card.', 'error');
     } finally {
         saving.value = false;
     }
 }
 
 function useTheirs() {
-    resetFrom(card.value);
+    // The 409 carried the current card; the matching broadcast may not have arrived yet.
+    resetFrom(conflict.value.card);
     conflict.value = null;
 }
 
@@ -95,7 +97,12 @@ function keepMine() {
 
 function remove() {
     if (!window.confirm('Delete this card?')) return;
+    emit('close');
     board.deleteCard(props.cardId);
+}
+
+function requestClose() {
+    if (dirty.value && !window.confirm('Discard your changes to this card?')) return;
     emit('close');
 }
 
@@ -106,10 +113,26 @@ function moveTo(columnId) {
 }
 
 function onKeydown(event) {
-    if (event.key === 'Escape') emit('close');
+    if (event.key === 'Escape') requestClose();
+    else if (event.key === 'Tab') trapFocus(event);
+}
+
+/** Keep Tab and Shift+Tab cycling inside the dialog. */
+function trapFocus(event) {
+    const focusable = [...dialog.value.querySelectorAll('button, input, select, textarea')].filter((el) => !el.disabled);
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
 }
 
 onMounted(() => {
+    returnFocusTo = document.activeElement;
     resetFrom(card.value);
     board.setEditing(props.cardId);
     window.addEventListener('keydown', onKeydown);
@@ -119,16 +142,19 @@ onMounted(() => {
 onBeforeUnmount(() => {
     board.setEditing(null);
     window.removeEventListener('keydown', onKeydown);
+    // Back to the card that opened the dialog, if it's still on the board.
+    nextTick(() => returnFocusTo?.isConnected && returnFocusTo.focus());
 });
 </script>
 
 <template>
-    <div class="fixed inset-0 z-40 grid place-items-center bg-slate-950/40 p-4" @mousedown.self="emit('close')">
+    <div class="fixed inset-0 z-40 grid place-items-center bg-slate-950/40 p-4" @mousedown.self="requestClose">
         <form
+            ref="dialog"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="card-title"
-            class="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl dark:bg-slate-900"
+            aria-label="Edit card"
+            class="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 shadow-2xl dark:bg-slate-900"
             @submit.prevent="save"
         >
             <div v-if="coEditors.length" class="mb-3 flex items-center gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
@@ -148,6 +174,7 @@ onBeforeUnmount(() => {
                     <dt class="text-slate-500">Yours</dt>
                     <dd class="break-words">{{ draft.title }}<span v-if="draft.description" class="text-slate-500"> · {{ draft.description }}</span></dd>
                 </dl>
+                <p v-if="conflict.card.label !== draft.label" class="mt-1 text-slate-600 dark:text-slate-400">The label differs too.</p>
                 <div class="mt-3 flex gap-2">
                     <button type="button" class="rounded-md bg-white px-3 py-1 font-medium shadow-sm ring-1 ring-slate-300 hover:bg-slate-50 dark:bg-slate-800 dark:ring-slate-600" @click="useTheirs">
                         Use theirs
@@ -182,6 +209,7 @@ onBeforeUnmount(() => {
                         type="button"
                         class="rounded px-2 py-0.5 text-xs ring-1 ring-slate-200 dark:ring-slate-700"
                         :class="draft.label === null ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : ''"
+                        :aria-pressed="draft.label === null"
                         @click="draft.label = null"
                     >
                         None
@@ -212,8 +240,8 @@ onBeforeUnmount(() => {
 
             <div class="mt-5 flex items-center gap-2">
                 <button type="button" class="rounded-md px-2 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10" @click="remove">Delete</button>
-                <span class="ml-auto text-xs text-slate-400">v{{ card.version }}</span>
-                <button type="button" class="rounded-md px-3 py-1.5 text-sm hover:bg-slate-100 dark:hover:bg-slate-800" @click="emit('close')">Cancel</button>
+                <span class="ml-auto text-xs text-slate-500 dark:text-slate-400">v{{ card.version }}</span>
+                <button type="button" class="rounded-md px-3 py-1.5 text-sm hover:bg-slate-100 dark:hover:bg-slate-800" @click="requestClose">Cancel</button>
                 <button
                     type="submit"
                     :disabled="saving || !draft.title.trim() || !!conflict"

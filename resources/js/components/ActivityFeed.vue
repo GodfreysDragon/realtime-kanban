@@ -24,7 +24,7 @@ function ago(iso) {
     <div class="p-4">
         <div class="flex items-center justify-between">
             <h2 class="text-sm font-semibold">Activity</h2>
-            <button class="rounded px-1.5 text-slate-400 hover:text-slate-900 lg:hidden dark:hover:text-white" aria-label="Close activity" @click="emit('close')">✕</button>
+            <button class="rounded px-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 lg:hidden dark:hover:text-white" aria-label="Close activity" @click="emit('close')">✕</button>
         </div>
 
         <p v-if="!board.activities.value.length" class="mt-4 text-sm text-slate-500">Nothing has happened yet.</p>
@@ -35,7 +35,7 @@ function ago(iso) {
                 <p class="min-w-0 break-words">
                     <span class="font-medium">{{ activity.user?.name ?? 'Someone' }}</span>
                     {{ activity.description }}
-                    <time class="block text-xs text-slate-400" :datetime="activity.created_at">{{ ago(activity.created_at) }}</time>
+                    <time class="block text-xs text-slate-500 dark:text-slate-400" :datetime="activity.created_at">{{ ago(activity.created_at) }}</time>
                 </p>
             </li>
         </TransitionGroup>

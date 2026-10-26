@@ -1,6 +1,7 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, provide, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, provide, reactive, ref, watch } from 'vue';
 import { useBoard } from '../composables/useBoard';
+import { useToasts } from '../composables/useToasts';
 import KanbanColumn from './KanbanColumn.vue';
 import CardModal from './CardModal.vue';
 import ActivityFeed from './ActivityFeed.vue';
@@ -23,6 +24,20 @@ provide('dnd', dnd);
 provide('me', props.me);
 
 onBeforeUnmount(() => board.dispose());
+
+const problem = computed(() => board.error.value ?? board.channelError.value);
+
+// The open card vanished: someone else deleted it, or its column. (Deleting
+// it yourself closes the dialog first, so this doesn't fire.)
+const { push: toast } = useToasts();
+watch(
+    () => openCardId.value != null && !board.cards[openCardId.value],
+    (gone) => {
+        if (!gone) return;
+        toast('That card was deleted by someone else.', 'error');
+        openCardId.value = null;
+    },
+);
 
 // Everyone else on the board, me first so I always see myself in the stack.
 const presence = computed(() => [props.me, ...board.members.value.filter((m) => m.id !== props.me.id)]);
@@ -79,8 +94,8 @@ function hidePointer() {
 
 <template>
     <div class="flex h-full flex-col">
-        <div v-if="board.error.value && !board.board.value" class="p-8 text-center text-sm text-slate-500">
-            {{ board.error.value }}
+        <div v-if="problem && !board.board.value" class="p-8 text-center text-sm text-slate-500" role="alert">
+            {{ problem }}
             <a href="#/" class="ml-1 text-indigo-600 hover:underline">Back to boards</a>
         </div>
 
@@ -98,12 +113,14 @@ function hidePointer() {
                     @keydown.esc="renaming = false"
                     @blur="finishRename"
                 />
-                <h1 v-else class="cursor-text rounded-md px-2 py-0.5 text-lg font-semibold hover:bg-slate-100 dark:hover:bg-slate-800" title="Click to rename" @click="startRename">
-                    {{ board.board.value.name }}
+                <h1 v-else class="text-lg font-semibold">
+                    <button type="button" class="cursor-text rounded-md px-2 py-0.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" title="Rename board" @click="startRename">
+                        {{ board.board.value.name }}
+                    </button>
                 </h1>
 
                 <div class="ml-auto flex items-center gap-3">
-                    <div class="flex -space-x-1.5" :aria-label="`${presence.length} online`">
+                    <div class="flex -space-x-1.5" role="group" :aria-label="`${presence.length} online`">
                         <UserAvatar v-for="member in presence.slice(0, 6)" :key="member.id" :user="member" size="sm" />
                         <span v-if="presence.length > 6" class="grid size-7 place-items-center rounded-full bg-slate-200 text-xs font-medium ring-2 ring-white dark:bg-slate-700 dark:ring-slate-900">
                             +{{ presence.length - 6 }}
@@ -118,6 +135,15 @@ function hidePointer() {
                         Activity
                     </button>
                 </div>
+            </div>
+
+            <div
+                v-if="problem"
+                role="alert"
+                class="flex shrink-0 items-center gap-3 border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-900 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200"
+            >
+                {{ problem }} The board may be out of date.
+                <button v-if="board.error.value" type="button" class="font-medium underline" @click="board.load()">Retry</button>
             </div>
 
             <div class="flex min-h-0 flex-1">

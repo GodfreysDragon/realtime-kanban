@@ -14,6 +14,7 @@ use App\Services\CardPositioner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 
 class ColumnController extends Controller
 {
@@ -23,10 +24,14 @@ class ColumnController extends Controller
     {
         $validated = $request->validate(['name' => ['required', 'string', 'max:60']]);
 
-        $column = $board->columns()->create([
-            ...$validated,
-            'position' => ($board->columns()->max('position') ?? 0.0) + CardPositioner::GAP,
-        ]);
+        $column = DB::transaction(function () use ($board, $validated) {
+            Board::whereKey($board->id)->lockForUpdate()->first();
+
+            return $board->columns()->create([
+                ...$validated,
+                'position' => ($board->columns()->max('position') ?? 0.0) + CardPositioner::GAP,
+            ]);
+        });
 
         broadcast(new ColumnCreated($column))->toOthers();
         $this->activity->record($board->id, $request->user(), 'column.created', "added column “{$column->name}”");

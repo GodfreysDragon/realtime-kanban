@@ -98,7 +98,7 @@ function remove() {
 </script>
 
 <template>
-    <section class="flex max-h-[calc(100vh-9rem)] w-72 shrink-0 flex-col rounded-xl bg-slate-100 dark:bg-slate-900" :data-column-id="column.id">
+    <section class="flex max-h-[calc(100dvh-9rem)] w-72 shrink-0 flex-col rounded-xl bg-slate-100 dark:bg-slate-900" :data-column-id="column.id">
         <header class="group flex items-center gap-2 px-3 pt-3 pb-2">
             <input
                 v-if="renaming"
@@ -110,10 +110,12 @@ function remove() {
                 @keydown.esc="renaming = false"
                 @blur="finishRename"
             />
-            <h2 v-else class="min-w-0 flex-1 cursor-text truncate text-sm font-semibold" title="Click to rename" @click="startRename">{{ column.name }}</h2>
+            <h2 v-else class="min-w-0 flex-1 truncate text-sm font-semibold">
+                <button type="button" class="w-full cursor-text truncate rounded text-left" title="Rename column" @click="startRename">{{ column.name }}</button>
+            </h2>
             <span class="rounded-full bg-slate-200 px-2 text-xs text-slate-600 tabular-nums dark:bg-slate-800 dark:text-slate-300">{{ cards.length }}</span>
             <button
-                class="rounded p-0.5 text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-200 hover:text-red-600 focus:opacity-100 dark:hover:bg-slate-800"
+                class="rounded p-0.5 text-slate-500 opacity-0 group-hover:opacity-100 hover:bg-slate-200 hover:text-red-600 focus:opacity-100 [@media(hover:none)]:opacity-100 dark:text-slate-400 dark:hover:bg-slate-800"
                 :aria-label="`Delete column ${column.name}`"
                 @click="remove"
             >
