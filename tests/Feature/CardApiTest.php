@@ -39,6 +39,7 @@ class CardApiTest extends TestCase
         $this->board = Board::factory()->create();
         $this->todo = Column::factory()->for($this->board)->create(['name' => 'To do', 'position' => 1024]);
         $this->done = Column::factory()->for($this->board)->create(['name' => 'Done', 'position' => 2048]);
+        $this->board->addMember($this->user);
 
         $this->actingAs($this->user);
     }
@@ -105,6 +106,7 @@ class CardApiTest extends TestCase
     {
         $card = $this->card($this->todo, 1024, ['title' => 'Original']);
         $bob = User::factory()->create(['name' => 'Bob']);
+        $this->board->addMember($bob);
 
         // Bob saves first...
         $this->actingAs($bob)->putJson("/api/cards/{$card->id}", ['title' => 'Bob’s title', 'version' => 1])->assertOk();

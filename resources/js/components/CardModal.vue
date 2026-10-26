@@ -1,6 +1,7 @@
 <script setup>
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { LABELS } from '../lib/labels';
+import { useDialog } from '../composables/useDialog';
 import { useToasts } from '../composables/useToasts';
 import UserAvatar from './UserAvatar.vue';
 
@@ -25,7 +26,6 @@ const conflict = ref(null);
 const saving = ref(false);
 const titleInput = ref(null);
 const dialog = ref(null);
-let returnFocusTo = null;
 
 function resetFrom(source) {
     draft.title = source.title;
@@ -112,39 +112,15 @@ function moveTo(columnId) {
     board.moveCard(props.cardId, Number(columnId), last?.id ?? null);
 }
 
-function onKeydown(event) {
-    if (event.key === 'Escape') requestClose();
-    else if (event.key === 'Tab') trapFocus(event);
-}
-
-/** Keep Tab and Shift+Tab cycling inside the dialog. */
-function trapFocus(event) {
-    const focusable = [...dialog.value.querySelectorAll('button, input, select, textarea')].filter((el) => !el.disabled);
-    const first = focusable[0];
-    const last = focusable.at(-1);
-    if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-    }
-}
+useDialog(dialog, requestClose);
 
 onMounted(() => {
-    returnFocusTo = document.activeElement;
     resetFrom(card.value);
     board.setEditing(props.cardId);
-    window.addEventListener('keydown', onKeydown);
     titleInput.value?.focus();
 });
 
-onBeforeUnmount(() => {
-    board.setEditing(null);
-    window.removeEventListener('keydown', onKeydown);
-    // Back to the card that opened the dialog, if it's still on the board.
-    nextTick(() => returnFocusTo?.isConnected && returnFocusTo.focus());
-});
+onBeforeUnmount(() => board.setEditing(null));
 </script>
 
 <template>

@@ -4,6 +4,7 @@ import { useBoard } from '../composables/useBoard';
 import { useToasts } from '../composables/useToasts';
 import KanbanColumn from './KanbanColumn.vue';
 import CardModal from './CardModal.vue';
+import ShareDialog from './ShareDialog.vue';
 import ActivityFeed from './ActivityFeed.vue';
 import LiveCursors from './LiveCursors.vue';
 import ConnectionBadge from './ConnectionBadge.vue';
@@ -17,6 +18,7 @@ const props = defineProps({
 const board = useBoard(props.boardId, props.me);
 const dnd = reactive({ cardId: null, overColumnId: null, overIndex: null });
 const openCardId = ref(null);
+const showShare = ref(false);
 const showActivity = ref(window.matchMedia('(min-width: 1024px)').matches);
 
 provide('board', board);
@@ -38,6 +40,12 @@ watch(
         openCardId.value = null;
     },
 );
+
+watch(board.removed, (removed) => {
+    if (!removed) return;
+    toast('You were removed from this board.', 'error');
+    window.location.hash = '#/';
+});
 
 // Everyone else on the board, me first so I always see myself in the stack.
 const presence = computed(() => [props.me, ...board.members.value.filter((m) => m.id !== props.me.id)]);
@@ -128,6 +136,13 @@ function hidePointer() {
                     </div>
                     <ConnectionBadge :status="board.status.value" />
                     <button
+                        type="button"
+                        class="rounded-md border border-slate-200 px-2.5 py-1 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+                        @click="showShare = true"
+                    >
+                        Share
+                    </button>
+                    <button
                         class="rounded-md border border-slate-200 px-2.5 py-1 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
                         :aria-pressed="showActivity"
                         @click="showActivity = !showActivity"
@@ -185,6 +200,7 @@ function hidePointer() {
             </div>
 
             <CardModal v-if="openCardId && board.cards[openCardId]" :key="openCardId" :card-id="openCardId" @close="openCardId = null" />
+            <ShareDialog v-if="showShare" @close="showShare = false" />
         </template>
 
         <div v-else class="p-8 text-sm text-slate-500">Loading board…</div>

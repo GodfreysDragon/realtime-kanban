@@ -15,6 +15,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class ColumnController extends Controller
 {
@@ -22,6 +23,7 @@ class ColumnController extends Controller
 
     public function store(Request $request, Board $board): JsonResponse
     {
+        Gate::authorize('view', $board);
         $validated = $request->validate(['name' => ['required', 'string', 'max:60']]);
 
         $column = DB::transaction(function () use ($board, $validated) {
@@ -41,6 +43,7 @@ class ColumnController extends Controller
 
     public function update(Request $request, Column $column): ColumnResource
     {
+        Gate::authorize('view', $column->board);
         $validated = $request->validate(['name' => ['required', 'string', 'max:60']]);
         $previousName = $column->name;
 
@@ -54,6 +57,7 @@ class ColumnController extends Controller
 
     public function destroy(Request $request, Column $column): Response
     {
+        Gate::authorize('view', $column->board);
         $cardCount = $column->cards()->count();
         $column->delete();
 

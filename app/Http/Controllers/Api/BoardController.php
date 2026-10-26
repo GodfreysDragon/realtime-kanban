@@ -12,6 +12,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class BoardController extends Controller
 {
@@ -19,9 +20,11 @@ class BoardController extends Controller
 
     public function __construct(private readonly BoardActivity $activity) {}
 
-    public function index(): AnonymousResourceCollection
+    public function index(Request $request): AnonymousResourceCollection
     {
-        return BoardResource::collection(Board::withCount('cards')->latest('updated_at')->get());
+        return BoardResource::collection(
+            Board::visibleTo($request->user())->withCount('cards')->latest('updated_at')->get(),
+        );
     }
 
     public function store(Request $request): JsonResponse
@@ -30,6 +33,7 @@ class BoardController extends Controller
 
         $board = DB::transaction(function () use ($validated, $request) {
             $board = Board::create([...$validated, 'created_by' => $request->user()->id]);
+            $board->addMember($request->user(), Board::OWNER);
 
             foreach (self::DEFAULT_COLUMNS as $i => $name) {
                 $board->columns()->create(['name' => $name, 'position' => ($i + 1) * CardPositioner::GAP]);
@@ -48,8 +52,14 @@ class BoardController extends Controller
      * after a WebSocket reconnect, since events sent while they were offline
      * are not replayed.
      */
-    public function show(Board $board): BoardResource
+    public function show(Request $request, Board $board): BoardResource
     {
+        Gate::authorize('view', $board);
+
+        // Only members see the invite link; on a public board non-members
+        // can still read and edit, but they can't hand out access.
+        $board->setAttribute('viewer_role', $board->roleOf($request->user()));
+
         return BoardResource::make($board->load([
             'columns',
             'cards',
@@ -59,6 +69,7 @@ class BoardController extends Controller
 
     public function update(Request $request, Board $board): BoardResource
     {
+        Gate::authorize('view', $board);
         $validated = $request->validate(['name' => ['required', 'string', 'max:80']]);
 
         $board->update($validated);

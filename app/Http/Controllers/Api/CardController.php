@@ -19,6 +19,7 @@ use App\Services\CardPositioner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 
 class CardController extends Controller
@@ -130,6 +131,7 @@ class CardController extends Controller
 
     public function destroy(Card $card): Response
     {
+        Gate::authorize('view', $card->board);
         $card->delete();
 
         broadcast(new CardDeleted($card->board_id, $card->id))->toOthers();

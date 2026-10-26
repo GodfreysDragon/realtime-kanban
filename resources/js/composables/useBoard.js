@@ -41,6 +41,7 @@ export function useBoard(boardId, me) {
     const loading = ref(true);
     const error = ref(null);
     const channelError = ref(null);
+    const removed = ref(false);
 
     let pending = [];
     let loadSeq = 0;
@@ -88,14 +89,18 @@ export function useBoard(boardId, me) {
         try {
             const { data } = await api('GET', `/api/boards/${boardId}`);
             if (seq !== loadSeq) return;
-            board.value = { id: data.id, name: data.name };
+            board.value = { id: data.id, name: data.name, public: data.public, role: data.role, inviteToken: data.invite_token ?? null };
             replace(columns, data.columns);
             replace(cards, data.cards);
             activities.value = data.activities;
             error.value = null;
         } catch (e) {
             if (seq !== loadSeq) return;
-            error.value = e.status === 404 ? 'This board does not exist.' : e.message;
+            error.value =
+                {
+                    403: "You're not a member of this board. Ask someone on it for an invite link.",
+                    404: 'This board does not exist.',
+                }[e.status] ?? e.message;
         } finally {
             if (seq === loadSeq) {
                 loading.value = false;
@@ -157,6 +162,13 @@ export function useBoard(boardId, me) {
         )
         .listen('.board.renamed', buffered(({ name }) => board.value && (board.value.name = name)))
         .listen('.activity.recorded', buffered(({ activity }) => pushActivity(activity)))
+        // Not buffered: losing access matters even mid-resync. On a public
+        // board you can still see it, you just stop being a member.
+        .listen('.member.removed', ({ user_id }) => {
+            if (user_id !== me.id) return;
+            if (board.value?.public) Object.assign(board.value, { role: null, inviteToken: null });
+            else removed.value = true;
+        })
         .listenForWhisper('cursor', ({ userId, x, y }) => {
             if (x == null) delete cursors[userId];
             else cursors[userId] = { x, y, at: Date.now() };
@@ -318,6 +330,7 @@ export function useBoard(boardId, me) {
         loading,
         error,
         channelError,
+        removed,
         load,
         applyCard: upsertCard,
         dispose,

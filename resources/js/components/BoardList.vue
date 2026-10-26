@@ -46,7 +46,7 @@ onMounted(load);
         <p v-if="error" class="mt-2 text-sm text-red-600">{{ error }}</p>
 
         <p v-if="loading" class="mt-8 text-sm text-slate-500">Loading…</p>
-        <p v-else-if="!boards.length" class="mt-8 text-sm text-slate-500">No boards yet. Create the first one above.</p>
+        <p v-else-if="!boards.length" class="mt-8 text-sm text-slate-500">No boards yet. Create one above, or open an invite link someone shared with you.</p>
 
         <ul v-else class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <li v-for="board in boards" :key="board.id">
@@ -54,7 +54,10 @@ onMounted(load);
                     :href="`#/boards/${board.id}`"
                     class="block rounded-lg border border-slate-200 bg-white p-4 hover:border-indigo-400 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-500"
                 >
-                    <span class="block font-medium">{{ board.name }}</span>
+                    <span class="flex items-center gap-2 font-medium">
+                        {{ board.name }}
+                        <span v-if="board.public" class="rounded bg-sky-50 px-1.5 text-xs font-normal text-sky-800 dark:bg-sky-500/10 dark:text-sky-200">Public</span>
+                    </span>
                     <span class="mt-1 block text-xs text-slate-500">{{ board.cards_count }} {{ board.cards_count === 1 ? 'card' : 'cards' }}</span>
                 </a>
             </li>

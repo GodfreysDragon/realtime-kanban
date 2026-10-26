@@ -14,6 +14,9 @@ class BoardResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
+            'public' => $this->public,
+            'role' => $this->whenHas('viewer_role'),
+            'invite_token' => $this->when($this->viewer_role !== null, fn () => $this->invite_token),
             'cards_count' => $this->whenCounted('cards'),
             'columns' => ColumnResource::collection($this->whenLoaded('columns')),
             'cards' => CardResource::collection($this->whenLoaded('cards')),

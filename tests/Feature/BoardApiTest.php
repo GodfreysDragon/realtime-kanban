@@ -45,6 +45,7 @@ class BoardApiTest extends TestCase
     public function test_index_lists_boards_with_card_counts(): void
     {
         $column = Column::factory()->create();
+        $column->board->addMember($this->user);
         Card::factory()->count(2)->for($column)->create();
 
         $this->getJson('/api/boards')
@@ -56,6 +57,7 @@ class BoardApiTest extends TestCase
     public function test_show_returns_the_full_snapshot(): void
     {
         $board = Board::factory()->create();
+        $board->addMember($this->user);
         $todo = Column::factory()->for($board)->create(['name' => 'To do', 'position' => 1]);
         Column::factory()->for($board)->create(['name' => 'Done', 'position' => 2]);
         $card = Card::factory()->for($todo)->create(['title' => 'Write tests']);
@@ -79,6 +81,7 @@ class BoardApiTest extends TestCase
     {
         Event::fake();
         $board = Board::factory()->create();
+        $board->addMember($this->user);
 
         $this->putJson("/api/boards/{$board->id}", ['name' => 'Renamed'])->assertOk();
 
@@ -90,6 +93,7 @@ class BoardApiTest extends TestCase
     {
         Event::fake();
         $board = Board::factory()->create();
+        $board->addMember($this->user);
         Column::factory()->for($board)->create(['position' => 5000]);
 
         $columnId = $this->postJson("/api/boards/{$board->id}/columns", ['name' => 'Review'])
