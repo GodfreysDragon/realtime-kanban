@@ -31,7 +31,7 @@ class Board extends Model
 
     protected function casts(): array
     {
-        return ['public' => 'boolean'];
+        return ['public' => 'boolean', 'event_seq' => 'integer'];
     }
 
     public static function newInviteToken(): string

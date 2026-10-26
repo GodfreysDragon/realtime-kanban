@@ -14,7 +14,7 @@ class CardDeleted extends BoardEvent
         return 'card.deleted';
     }
 
-    public function broadcastWith(): array
+    public function payload(): array
     {
         return ['id' => $this->cardId];
     }

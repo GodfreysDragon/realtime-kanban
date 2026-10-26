@@ -14,7 +14,7 @@ class MemberRemoved extends BoardEvent
         return 'member.removed';
     }
 
-    public function broadcastWith(): array
+    public function payload(): array
     {
         return ['user_id' => $this->userId];
     }

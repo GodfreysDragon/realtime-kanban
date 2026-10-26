@@ -21,7 +21,7 @@ class ColumnRebalanced extends BoardEvent
         return 'column.rebalanced';
     }
 
-    public function broadcastWith(): array
+    public function payload(): array
     {
         return ['column_id' => $this->columnId, 'positions' => (object) $this->positions];
     }

@@ -15,7 +15,7 @@ abstract class CardEvent extends BoardEvent
         parent::__construct($card->board_id);
     }
 
-    public function broadcastWith(): array
+    public function payload(): array
     {
         return ['card' => CardResource::make($this->card)->resolve()];
     }

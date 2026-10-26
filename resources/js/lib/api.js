@@ -8,6 +8,21 @@ export class ApiError extends Error {
     }
 }
 
+const boardEventListeners = new Set();
+
+/**
+ * Subscribe to the sequence numbers each response reports in X-Board-Events
+ * ("board:seq,..."): the events a request broadcast, including the ones
+ * sent ->toOthers() that this tab will never receive.
+ *
+ * @param {(events: Array<[number, number]>) => void} listener
+ * @returns {() => void} unsubscribe
+ */
+export function onBoardEvents(listener) {
+    boardEventListeners.add(listener);
+    return () => boardEventListeners.delete(listener);
+}
+
 function csrfToken() {
     return document.querySelector('meta[name="csrf-token"]')?.content ?? '';
 }
@@ -41,6 +56,12 @@ export async function api(method, url, body) {
         credentials: 'same-origin',
         body: body === undefined ? undefined : JSON.stringify(body),
     });
+
+    const sent = response.headers.get('X-Board-Events');
+    if (sent) {
+        const events = sent.split(',').map((pair) => pair.split(':').map(Number));
+        boardEventListeners.forEach((listener) => listener(events));
+    }
 
     const data = response.status === 204 ? null : await response.json().catch(() => null);
 

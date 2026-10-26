@@ -16,7 +16,7 @@ class BoardRenamed extends BoardEvent
         return 'board.renamed';
     }
 
-    public function broadcastWith(): array
+    public function payload(): array
     {
         return ['name' => $this->board->name];
     }
