@@ -107,13 +107,22 @@ The client applies its own changes optimistically. Every API call sends `X-Socke
 `->toOthers()`, so the tab that made a change never receives it back. The HTTP response then replaces the optimistic
 value with the server's.
 
+Moves of the same card or column are sent one at a time. Two requests in flight together can be handled by different
+PHP workers in either order, which would leave the server on the older move while the tab shows the newer one. While
+one move is in flight only the newest waiting move is kept, and it is sent when the first returns.
+
 ### Ordering with fractional indexes
 Each card has a float `position`. Dropping a card between two others gives it the midpoint of their positions, so a
 move rewrites exactly **one row**, and two people reordering different cards never conflict. The client sends the card
 it was dropped *after* (`after_id`) rather than an index, and the server resolves it against the current database
 state. If that neighbour has meanwhile been moved elsewhere, the card goes to the bottom instead of failing. Repeated
 drops into the same gap halve it each time. Below `1e-6` the column is renumbered and a `column.rebalanced` event pushes
-the new positions to everyone (`app/Services/CardPositioner.php`).
+the new positions to everyone.
+
+Columns are ordered the same way on the board (`PATCH /api/columns/{id}/move`, `column.moved`, and
+`columns.rebalanced` when the board's columns are renumbered). Both use `app/Services/FractionalIndex.php`. It takes a
+query for the *other* rows in the list, scoped to that list, and every write goes through the same query, so a row that
+has meanwhile left the list is never renumbered into it.
 
 ### Conflicting edits: optimistic concurrency
 Cards carry a `version`. A save is a conditional `UPDATE … WHERE version = ?`. If no row is affected, someone else
@@ -151,21 +160,22 @@ Events implement `ShouldBroadcastNow`. Queued broadcasts with several workers ca
 high-traffic deployment would use a single ordered queue or a per-board sequence number instead.
 
 ### Drag and drop on Pointer Events
-The native HTML5 drag API never fires for touch, so cards are dragged with Pointer Events instead
+The native HTML5 drag API never fires for touch, so cards and columns are dragged with Pointer Events instead
 (`resources/js/lib/pointerDrag.js`), which covers mouse, touch and pen with one code path:
 - With a mouse or pen, the drag starts after a few pixels of movement, so a plain click still opens the card.
 - On a touch screen it starts after a 300 ms press without moving. Moving sooner is a scroll, so the board stays
   scrollable by swiping across cards. Once a drag starts, the first `touchmove` is cancelled so the page doesn't scroll
   under the finger.
 - A copy of the card follows the pointer, scroll containers under it scroll near their edges, and Escape cancels.
-- The board decides what's under the pointer (`elementFromPoint`) and reuses the same drop indicator and `moveCard`
-  call as before.
+- The board decides what's under the pointer (`elementFromPoint`) and where the drop indicator goes.
+- A column's header is its drag handle, apart from the delete button.
 
 ### Keyboard and screen readers
 - Cards open with Enter or Space.
 - Alt+↑/↓ moves the focused card within its column, and Alt+←/→ moves it to the same position in the neighbouring
   column. Focus stays on the card, and the new position is announced (“Moved “Press kit” to position 2 of 3 in
   Review”).
+- On a column's name, Alt+←/→ moves the column one place.
 - The card dialog keeps Tab inside it and returns focus to the card when it closes.
 - Escape, Cancel or a click outside ask before throwing away unsaved edits.
 - Board and column names are renamed through real buttons.
@@ -175,7 +185,7 @@ The native HTML5 drag API never fires for touch, so cards are dragged with Point
 ## Tests
 
 ```sh
-php artisan test          # 49 PHPUnit feature tests
+php artisan test          # 54 PHPUnit feature tests
 npm run test:e2e          # two headless browsers against a running app + Reverb (see below)
 ```
 
@@ -188,7 +198,7 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - sequence numbers: one per broadcast, per board, reported in the snapshot and the `X-Board-Events` header;
   - races where another request commits mid-move, reproduced deterministically by hooking Eloquent's `retrieved`
     event;
-  - fractional positioning, including a 60-drop stress test that forces a rebalance;
+  - fractional positioning of cards, including a 60-drop stress test that forces a rebalance, and of columns;
   - cross-board validation;
   - real `/broadcasting/auth` presence signing with the Reverb driver.
 - **End-to-end** (`tests/e2e/two-users.mjs`) drives two signed-in users in headless Edge/Chrome through `playwright-core`,
@@ -207,6 +217,7 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - keyboard: Enter opens a card, focus stays in the dialog, Escape returns focus to the card;
   - keyboard moves: Alt+Arrow moves a card to another column, keeps focus on it and announces it;
   - reordering within a column by mouse;
+  - reordering columns by dragging a header, and with Alt+Arrow on a column name;
   - touch, through Chrome's DevTools protocol: a long press then drag moves a card, a quick swipe scrolls instead;
   - delete propagation, including closing the dialog of someone who had the card open;
   - removing a member, whose tab is sent back to the board list.
@@ -226,10 +237,6 @@ starts Reverb and the app server first.
   transferred.
 - **One Reverb server.** Scaling across several servers (Redis pub/sub) isn't configured; Reverb supports it with
   `REVERB_SCALING_ENABLED`.
-
-## What's next
-
-1. Column reordering by drag, using the same fractional-index approach.
 
 ## License
 

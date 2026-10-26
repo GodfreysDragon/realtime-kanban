@@ -78,10 +78,14 @@ function begin(state) {
     state.offsetX = state.startX - rect.left;
     state.offsetY = state.startY - rect.top;
 
+    // The copy must not answer the selectors the board uses for the real
+    // thing (a dragged column contains cards, too).
     const ghost = state.element.cloneNode(true);
-    ghost.removeAttribute('data-card-id');
-    ghost.removeAttribute('data-column-id');
-    ghost.removeAttribute('id');
+    for (const el of [ghost, ...ghost.querySelectorAll('[data-card-id], [data-column-id], [id]')]) {
+        el.removeAttribute('data-card-id');
+        el.removeAttribute('data-column-id');
+        el.removeAttribute('id');
+    }
     ghost.setAttribute('aria-hidden', 'true');
     Object.assign(ghost.style, {
         position: 'fixed',

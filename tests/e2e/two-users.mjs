@@ -140,6 +140,25 @@ await step('drag and drop: reordering within a column puts the card where it was
     if (!titles[0].includes('Goes on top') || !titles[1].includes('Hello realtime')) throw new Error(`unexpected order: ${titles.join(' / ')}`);
 });
 
+const columnOrder = (page) => page.locator('section[data-column-id] h2').allTextContents().then((names) => names.map((n) => n.trim()).join(' / '));
+const waitForColumnOrder = (page, expected) =>
+    page.waitForFunction((expected) => [...document.querySelectorAll('section[data-column-id] h2')].map((h) => h.textContent.trim()).join(' / ') === expected, expected, { timeout: 5000 });
+
+await step('columns: Ada drags Done to the front by its header, Bob sees the new order', async () => {
+    await column(a, 'Done').locator('header').dragTo(column(a, 'To do').locator('header'), { targetPosition: { x: 8, y: 10 } });
+    await waitForColumnOrder(b, 'Done / To do / In progress');
+    if ((await columnOrder(a)) !== 'Done / To do / In progress') throw new Error(`Ada sees ${await columnOrder(a)}`);
+});
+
+await step('columns: Alt+Arrow on a column name moves it back, focus stays on it', async () => {
+    await column(a, 'Done').locator('h2 button').focus();
+    await a.keyboard.press('Alt+ArrowRight');
+    await a.keyboard.press('Alt+ArrowRight');
+    await waitForColumnOrder(b, 'To do / In progress / Done');
+    if (!(await a.evaluate(() => document.activeElement?.textContent.trim() === 'Done'))) throw new Error('focus left the column name');
+    await a.locator('[aria-live=assertive]', { hasText: 'Moved column “Done” to position 3 of 3.' }).waitFor({ state: 'attached', timeout: 2000 });
+});
+
 await step('editing indicator: Ada opens the card, Bob sees "Ada is editing"', async () => {
     await card(a, 'Hello realtime').click();
     await a.waitForSelector('[role=dialog]');
@@ -257,30 +276,30 @@ await step('touch: a long press drags a card to another column, a quick swipe sc
     const cdp = await ctx.newCDPSession(phone);
     const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
 
-    await addCard(phone, 'To do', 'Moved by touch');
-    const box = await card(phone, 'Moved by touch').boundingBox();
-    const [x, y] = [box.x + 40, box.y + box.height / 2];
-
-    // A quick horizontal swipe on the card scrolls the board and moves nothing.
-    const scroller = phone.locator('.overflow-auto').first();
-    const scrolledBefore = await scroller.evaluate((el) => el.scrollLeft);
-    await touch('touchStart', x + 150, y);
-    for (let i = 1; i <= 6; i++) await touch('touchMove', x + 150 - i * 25, y);
-    await touch('touchEnd');
-    await phone.waitForTimeout(400);
-    if ((await scroller.evaluate((el) => el.scrollLeft)) <= scrolledBefore) throw new Error('the swipe did not scroll the board');
-    await scroller.evaluate((el) => (el.scrollLeft = 0));
-    if (!(await column(phone, 'To do').locator('[data-card-id]', { hasText: 'Moved by touch' }).count())) throw new Error('the swipe moved the card');
-
     // Long press, then drag into the next column (its left edge shows at x ≈ 316).
+    await addCard(phone, 'To do', 'Moved by touch');
+    let box = await card(phone, 'Moved by touch').boundingBox();
+    let [x, y] = [box.x + 40, box.y + box.height / 2];
     const target = await column(phone, 'In progress').locator('ol').boundingBox();
     await touch('touchStart', x, y);
     await phone.waitForTimeout(450);
     const [tx, ty] = [Math.min(target.x + 24, 335), target.y + 20];
     for (let i = 1; i <= 8; i++) await touch('touchMove', x + ((tx - x) * i) / 8, y + ((ty - y) * i) / 8);
     await touch('touchEnd');
-
     await column(a, 'In progress').locator('[data-card-id]', { hasText: 'Moved by touch' }).waitFor({ timeout: 5000 });
+
+    // A quick horizontal swipe across a card scrolls the board and moves nothing.
+    await addCard(phone, 'To do', 'Swiped across');
+    box = await card(phone, 'Swiped across').boundingBox();
+    [x, y] = [box.x + 190, box.y + box.height / 2];
+    const scroller = phone.locator('.overflow-auto').first();
+    const scrolledBefore = await scroller.evaluate((el) => el.scrollLeft);
+    await touch('touchStart', x, y);
+    for (let i = 1; i <= 6; i++) await touch('touchMove', x - i * 25, y);
+    await touch('touchEnd');
+    await phone.waitForTimeout(600); // let the fling settle
+    if ((await scroller.evaluate((el) => el.scrollLeft)) <= scrolledBefore) throw new Error('the swipe did not scroll the board');
+    if (!(await column(phone, 'To do').locator('[data-card-id]', { hasText: 'Swiped across' }).count())) throw new Error('the swipe moved the card');
     await phone.screenshot({ path: `${OUT}/touch.png` });
     await ctx.close();
 });

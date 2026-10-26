@@ -24,6 +24,7 @@ Route::prefix('api')->name('api.')->group(function () {
         Route::post('invites/{token}', [MemberController::class, 'accept'])->middleware('throttle:30,1')->name('invite.accept');
 
         Route::post('boards/{board}/columns', [ColumnController::class, 'store'])->name('columns.store');
+        Route::patch('columns/{column}/move', [ColumnController::class, 'move'])->name('columns.move');
         Route::apiResource('columns', ColumnController::class)->only(['update', 'destroy']);
 
         Route::post('columns/{column}/cards', [CardController::class, 'store'])->name('cards.store');
