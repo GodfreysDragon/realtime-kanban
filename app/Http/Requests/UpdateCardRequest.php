@@ -4,10 +4,16 @@ namespace App\Http\Requests;
 
 use App\Models\Card;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 
 class UpdateCardRequest extends FormRequest
 {
+    public function authorize(): bool
+    {
+        return Gate::allows('view', $this->route('card')->board);
+    }
+
     public function rules(): array
     {
         return [

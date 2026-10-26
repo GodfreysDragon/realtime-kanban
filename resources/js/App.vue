@@ -10,6 +10,8 @@ import ToastStack from './components/ToastStack.vue';
 const me = ref(null);
 const ready = ref(false);
 const boardId = ref(parseRoute());
+const inviteError = ref('');
+const joining = ref(false);
 
 function parseRoute() {
     const match = window.location.hash.match(/^#\/boards\/(\d+)/);
@@ -18,6 +20,27 @@ function parseRoute() {
 
 function onHashChange() {
     boardId.value = parseRoute();
+    acceptInvite();
+}
+
+/**
+ * #/invite/{token}: join the board and open it. Signing in reloads the page
+ * with the hash intact, so a link opened while signed out lands here too.
+ */
+async function acceptInvite() {
+    inviteError.value = '';
+    const match = window.location.hash.match(/^#\/invite\/([\w-]+)/);
+    if (!match || !me.value) return;
+
+    joining.value = true;
+    try {
+        const { data } = await api('POST', `/api/invites/${match[1]}`);
+        window.location.replace(`#/boards/${data.board_id}`);
+    } catch (e) {
+        inviteError.value = e.data?.message ?? e.message;
+    } finally {
+        joining.value = false;
+    }
 }
 
 async function logout() {
@@ -33,6 +56,7 @@ onMounted(async () => {
     const { user } = await api('GET', '/api/me');
     me.value = user;
     ready.value = true;
+    acceptInvite();
 });
 
 onBeforeUnmount(() => window.removeEventListener('hashchange', onHashChange));
@@ -58,6 +82,11 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', onHashChange));
             <template v-if="ready">
                 <JoinScreen v-if="!me" />
                 <BoardView v-else-if="boardId" :key="boardId" :board-id="boardId" :me="me" />
+                <p v-else-if="joining" class="p-8 text-sm text-slate-500">Joining the board…</p>
+                <div v-else-if="inviteError" class="p-8 text-center text-sm text-slate-500" role="alert">
+                    {{ inviteError }}
+                    <a href="#/" class="ml-1 text-indigo-600 hover:underline">Back to boards</a>
+                </div>
                 <BoardList v-else />
             </template>
         </main>

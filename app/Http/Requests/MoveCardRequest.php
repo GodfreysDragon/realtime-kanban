@@ -3,10 +3,16 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 
 class MoveCardRequest extends FormRequest
 {
+    public function authorize(): bool
+    {
+        return Gate::allows('view', $this->route('card')->board);
+    }
+
     public function rules(): array
     {
         $boardId = $this->route('card')->board_id;

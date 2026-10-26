@@ -20,7 +20,9 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $owner = User::factory()->create(['name' => 'Demo Bot', 'color' => '#8b5cf6']);
-        $board = Board::create(['name' => 'Product launch', 'created_by' => $owner->id]);
+        // Public, so everyone who joins can try it without an invite link.
+        $board = Board::create(['name' => 'Product launch', 'public' => true, 'created_by' => $owner->id]);
+        $board->addMember($owner, Board::OWNER);
 
         $columns = [
             'Backlog' => [['Competitor pricing review', 'purple'], ['Press kit', null], ['Localise onboarding', 'blue']],

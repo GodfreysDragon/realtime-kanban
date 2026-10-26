@@ -71,8 +71,19 @@ await step('Ada creates a board', async () => {
     await a.waitForSelector('[data-testid=connection-status]:has-text("Live")');
 });
 
-await step('Bob opens it and both connect over WebSockets', async () => {
+await step('membership: Bob is refused until Ada shares the invite link', async () => {
     await b.goto(boardUrl);
+    await b.locator("text=You're not a member of this board").waitFor({ timeout: 5000 });
+
+    await a.click('button:has-text("Share")');
+    const inviteUrl = await a.inputValue('#invite-link');
+    await a.keyboard.press('Escape');
+
+    await b.goto(inviteUrl);
+    await b.waitForURL(boardUrl);
+});
+
+await step('Bob opens it and both connect over WebSockets', async () => {
     await b.waitForSelector('[data-testid=connection-status]:has-text("Live")');
 });
 
@@ -169,6 +180,17 @@ await b.mouse.move(400, 250);
 await a.waitForTimeout(400);
 await a.screenshot({ path: `${OUT}/ada.png` });
 await b.screenshot({ path: `${OUT}/bob.png` });
+
+await step('membership: Ada removes Bob, and Bob is sent back to his boards', async () => {
+    await a.click('button:has-text("Share")');
+    await a.locator('[data-testid=members] li', { hasText: 'Bob' }).locator('text=Remove').click();
+    await a.locator('[data-testid=members] li', { hasText: 'Bob' }).waitFor({ state: 'detached', timeout: 5000 });
+    await a.keyboard.press('Escape');
+
+    await b.locator('text=You were removed from this board.').waitFor({ timeout: 5000 });
+    await b.waitForSelector('text=Boards');
+    if (await b.locator('a', { hasText: 'E2E board' }).count()) throw new Error('the board is still in Bob\'s list');
+});
 
 if (boardUrl) {
     const mobile = await ctxA.newPage();

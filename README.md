@@ -46,6 +46,8 @@ composer run dev                # app server, Reverb, queue worker and Vite toge
 ```
 
 Then open http://localhost:8000 in one browser, open it again in a private window, and join with two different names.
+The seeded *Product launch* board is public, so both can open it straight away. Boards you create are private: use
+**Share** to copy an invite link for the other window.
 
 If you run the processes by hand, the two that matter are `php artisan serve` and `php artisan reverb:start`.
 
@@ -119,6 +121,18 @@ else just moved out keeps its new place. `lockForUpdate()` does nothing on SQLit
 transaction `IMMEDIATE` instead: concurrent writers queue for the database lock rather than failing with
 "database is locked".
 
+### Membership
+A board is private to its members unless it's public. `BoardPolicy::view` decides, and the same rule guards every API
+endpoint and the `board.{board}` presence channel, so the REST snapshot and the live view can't disagree about who
+sees a board. Card endpoints check it in their form requests' `authorize()`, which runs before validation, so an
+outsider gets a 403 rather than validation errors.
+
+People join through the board's **invite link** (`#/invite/{token}`). A link opened while signed out survives the
+sign-in, because joining reloads the page with the hash intact. The owner can reset the link, which makes the old one
+stop working, and remove members. A member can leave. Removal is broadcast as `member.removed` to everyone, the removed
+person included: Reverb can't unsubscribe a socket from the server, so the removed tab leaves on its own and the API
+refuses its requests from then on.
+
 ### Synchronous broadcasts
 Events implement `ShouldBroadcastNow`. Queued broadcasts with several workers can arrive out of order ("moved" before
 "created"), and the cost of handing a message to a local Reverb server inside the request is a few milliseconds. A
@@ -135,12 +149,13 @@ high-traffic deployment would use a single ordered queue or a per-board sequence
 ## Tests
 
 ```sh
-php artisan test          # 32 PHPUnit feature tests
+php artisan test          # 44 PHPUnit feature tests
 npm run test:e2e          # two headless browsers against a running app + Reverb (see below)
 ```
 
 - **PHPUnit** covers:
   - auth;
+  - membership: every endpoint and the channel refuse outsiders, invite links, resetting a link, removing and leaving;
   - board, column and card CRUD;
   - broadcast dispatch, payloads and `toOthers` socket exclusion;
   - version conflicts;
@@ -151,6 +166,7 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - real `/broadcasting/auth` presence signing with the Reverb driver.
 - **End-to-end** (`tests/e2e/two-users.mjs`) drives two signed-in users in headless Edge/Chrome through `playwright-core`,
   using the installed browser so nothing is downloaded. It checks:
+  - joining through an invite link, after being refused without one;
   - presence;
   - card creation;
   - live cursors;
@@ -160,7 +176,8 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - the full 409 conflict flow;
   - disconnect → missed event → reconnect → resync;
   - keyboard: Enter opens a card, focus stays in the dialog, Escape returns focus to the card;
-  - delete propagation, including closing the dialog of someone who had the card open.
+  - delete propagation, including closing the dialog of someone who had the card open;
+  - removing a member, whose tab is sent back to the board list.
 
   Set `E2E_URL` if the app isn't on `http://127.0.0.1:8000`, and `E2E_BROWSER_PATH` to use a Chromium binary other
   than an installed Edge or Chrome. Screenshots land in `storage/e2e/`.
@@ -173,8 +190,8 @@ starts Reverb and the app server first.
 - **Sign-in is "join with a display name"** (`AuthController`), which creates a guest user so the demo needs no
   registration. The session guard, CSRF and presence-channel auth downstream are standard and would work unchanged with
   Fortify or a starter kit.
-- **Every signed-in user can open every board.** The membership check belongs in the `board.{board}` channel callback
-  in `routes/channels.php` and in a policy.
+- **Members and the owner are the only roles.** There are no read-only members, and a board's ownership can't be
+  transferred.
 - **Drag and drop uses the native HTML5 API**, which touch screens don't support. On mobile, cards can be moved with the
   *Column* select in the card dialog.
 - **One Reverb server.** Scaling across several servers (Redis pub/sub) isn't configured; Reverb supports it with
@@ -182,10 +199,9 @@ starts Reverb and the app server first.
 
 ## What's next
 
-1. Board membership and invitations: a check in the `board.{board}` channel callback plus a policy on the API.
-2. Column reordering by drag, using the same fractional-index approach.
-3. Touch drag and drop (e.g. SortableJS) and keyboard reordering inside a column.
-4. A per-board event sequence number, so clients can spot gaps and resync without waiting for a reconnect.
+1. Column reordering by drag, using the same fractional-index approach.
+2. Touch drag and drop (e.g. SortableJS) and keyboard reordering inside a column.
+3. A per-board event sequence number, so clients can spot gaps and resync without waiting for a reconnect.
 
 ## License
 

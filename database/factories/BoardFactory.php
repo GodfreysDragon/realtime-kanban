@@ -16,6 +16,7 @@ class BoardFactory extends Factory
         return [
             'name' => ucfirst(fake()->words(2, true)),
             'created_by' => User::factory(),
+            'invite_token' => Board::newInviteToken(),
         ];
     }
 }

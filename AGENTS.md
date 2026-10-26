@@ -20,9 +20,11 @@ npm run test:e2e                 # two-browser test; needs `php artisan serve` a
   `version` is older than their copy, so broadcast the row as it is after the write (refresh the model inside the
   transaction), never a model loaded before it.
 - **Broadcasts use `ShouldBroadcastNow` and `->toOthers()`.** The acting tab applies its own change optimistically and
-  sends `X-Socket-ID`. Activity and rebalance events are the exceptions: they go to everyone.
+  sends `X-Socket-ID`. Activity, rebalance and member-removed events are the exceptions: they go to everyone.
 - **Card content edits are conditional on `version`** (`UPDATE … WHERE version = ?`, 409 on mismatch). Moves are
   last-writer-wins and do not bump `version`, so a drag never turns into an edit conflict.
+- **Access goes through `BoardPolicy`.** `view` guards the API (in form requests' `authorize()` or `Gate::authorize`)
+  and the presence channel callback alike; a new endpoint on a board must check it too.
 - **Positions are fractional.** Use `App\Services\CardPositioner`; don't renumber a column anywhere else.
 - **The client snapshot is the source of truth.** It is re-fetched whenever the presence channel (re)subscribes; see
   the header comment in `resources/js/composables/useBoard.js`.

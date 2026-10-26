@@ -31,6 +31,7 @@ class BroadcastChannelTest extends TestCase
     {
         $user = User::factory()->create(['name' => 'Ada', 'color' => '#22c55e']);
         $board = Board::factory()->create();
+        $board->addMember($user);
 
         $response = $this->actingAs($user)
             ->postJson('/broadcasting/auth', ['socket_id' => '1234.5678', 'channel_name' => "presence-board.{$board->id}"])
@@ -56,5 +57,19 @@ class BroadcastChannelTest extends TestCase
         $this->actingAs(User::factory()->create())
             ->postJson('/broadcasting/auth', ['socket_id' => '1234.5678', 'channel_name' => 'presence-board.999'])
             ->assertForbidden();
+    }
+
+    public function test_non_members_cannot_join_a_private_board_but_anyone_can_join_a_public_one(): void
+    {
+        $user = User::factory()->create();
+        $private = Board::factory()->create();
+        $public = Board::factory()->create(['public' => true]);
+
+        $this->actingAs($user)
+            ->postJson('/broadcasting/auth', ['socket_id' => '1234.5678', 'channel_name' => "presence-board.{$private->id}"])
+            ->assertForbidden();
+
+        $this->postJson('/broadcasting/auth', ['socket_id' => '1234.5678', 'channel_name' => "presence-board.{$public->id}"])
+            ->assertOk();
     }
 }
