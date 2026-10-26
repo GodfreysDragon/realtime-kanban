@@ -132,6 +132,13 @@ starts Reverb and the app server first.
 - **Drag and drop uses the native HTML5 API**, which touch screens don't support. On mobile, cards can be moved with the
   *Column* select in the card dialog.
 
+## What's next
+
+1. Board membership and invitations: a check in the `board.{board}` channel callback plus a policy on the API.
+2. Column reordering by drag, using the same fractional-index approach.
+3. Touch drag and drop (e.g. SortableJS) and keyboard reordering inside a column.
+4. A per-board event sequence number, so clients can spot gaps and resync without waiting for a reconnect.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
