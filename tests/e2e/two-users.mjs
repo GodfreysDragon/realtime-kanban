@@ -24,6 +24,7 @@ async function step(name, fn) {
     } catch (e) {
         results.push(`FAIL ${name}: ${e.message.split('\n')[0]}`);
     }
+    console.log(results.at(-1));
 }
 
 const browser = await chromium.launch({
@@ -66,6 +67,7 @@ await step('both users join', async () => {
 });
 
 let boardUrl;
+let inviteUrl;
 await step('Ada creates a board', async () => {
     await a.fill('input[placeholder="New board name"]', 'E2E board');
     await a.click('text=Create');
@@ -79,7 +81,7 @@ await step('membership: Bob is refused until Ada shares the invite link', async 
     await b.locator("text=You're not a member of this board").waitFor({ timeout: 5000 });
 
     await a.click('button:has-text("Share")');
-    const inviteUrl = await a.inputValue('#invite-link');
+    inviteUrl = await a.inputValue('#invite-link');
     await a.keyboard.press('Escape');
 
     await b.goto(inviteUrl);
@@ -114,6 +116,28 @@ await step('drag and drop: Ada drags the card to Done, Bob sees it move', async 
 
 await step('activity feed on Bob shows the move', async () => {
     await b.locator('[data-testid=activity-feed]', { hasText: 'moved “Hello realtime” from To do to Done' }).waitFor({ timeout: 5000 });
+});
+
+await step('keyboard: Alt+Arrow moves a card between columns, focus stays on it, and Bob sees it', async () => {
+    await card(a, 'Hello realtime').focus();
+    await a.keyboard.press('Alt+ArrowLeft');
+    await column(b, 'In progress').locator('[data-card-id]', { hasText: 'Hello realtime' }).waitFor({ timeout: 5000 });
+    if (!(await a.evaluate(() => document.activeElement?.closest('[data-card-id]')?.textContent.includes('Hello realtime')))) throw new Error('focus left the card');
+    await a.locator('[aria-live=assertive]', { hasText: 'Moved “Hello realtime” to position 1 of 1 in In progress.' }).waitFor({ state: 'attached', timeout: 2000 });
+
+    await a.keyboard.press('Alt+ArrowRight');
+    await column(b, 'Done').locator('[data-card-id]', { hasText: 'Hello realtime' }).waitFor({ timeout: 5000 });
+});
+
+await step('drag and drop: reordering within a column puts the card where it was dropped', async () => {
+    await addCard(a, 'Done', 'Goes on top');
+    await card(a, 'Goes on top').waitFor();
+    await card(a, 'Goes on top').dragTo(card(a, 'Hello realtime'), { targetPosition: { x: 20, y: 3 } });
+    for (const page of [a, b]) {
+        await column(page, 'Done').locator('[data-card-id]').first().filter({ hasText: 'Goes on top' }).waitFor({ timeout: 5000 });
+    }
+    const titles = await column(b, 'Done').locator('[data-card-id]').allTextContents();
+    if (!titles[0].includes('Goes on top') || !titles[1].includes('Hello realtime')) throw new Error(`unexpected order: ${titles.join(' / ')}`);
 });
 
 await step('editing indicator: Ada opens the card, Bob sees "Ada is editing"', async () => {
@@ -223,6 +247,44 @@ await step('membership: Ada removes Bob, and Bob is sent back to his boards', as
     if (await b.locator('a', { hasText: 'E2E board' }).count()) throw new Error('the board is still in Bob\'s list');
 });
 
+await step('touch: a long press drags a card to another column, a quick swipe scrolls instead', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 780 }, hasTouch: true, isMobile: true });
+    const phone = await ctx.newPage();
+    phone.on('pageerror', (e) => results.push(`PAGE ERROR phone: ${e.message}`));
+    await join(phone, 'Tess');
+    await phone.goto(inviteUrl);
+    await phone.waitForSelector('[data-testid=connection-status]:has-text("Live")');
+    const cdp = await ctx.newCDPSession(phone);
+    const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+
+    await addCard(phone, 'To do', 'Moved by touch');
+    const box = await card(phone, 'Moved by touch').boundingBox();
+    const [x, y] = [box.x + 40, box.y + box.height / 2];
+
+    // A quick horizontal swipe on the card scrolls the board and moves nothing.
+    const scroller = phone.locator('.overflow-auto').first();
+    const scrolledBefore = await scroller.evaluate((el) => el.scrollLeft);
+    await touch('touchStart', x + 150, y);
+    for (let i = 1; i <= 6; i++) await touch('touchMove', x + 150 - i * 25, y);
+    await touch('touchEnd');
+    await phone.waitForTimeout(400);
+    if ((await scroller.evaluate((el) => el.scrollLeft)) <= scrolledBefore) throw new Error('the swipe did not scroll the board');
+    await scroller.evaluate((el) => (el.scrollLeft = 0));
+    if (!(await column(phone, 'To do').locator('[data-card-id]', { hasText: 'Moved by touch' }).count())) throw new Error('the swipe moved the card');
+
+    // Long press, then drag into the next column (its left edge shows at x ≈ 316).
+    const target = await column(phone, 'In progress').locator('ol').boundingBox();
+    await touch('touchStart', x, y);
+    await phone.waitForTimeout(450);
+    const [tx, ty] = [Math.min(target.x + 24, 335), target.y + 20];
+    for (let i = 1; i <= 8; i++) await touch('touchMove', x + ((tx - x) * i) / 8, y + ((ty - y) * i) / 8);
+    await touch('touchEnd');
+
+    await column(a, 'In progress').locator('[data-card-id]', { hasText: 'Moved by touch' }).waitFor({ timeout: 5000 });
+    await phone.screenshot({ path: `${OUT}/touch.png` });
+    await ctx.close();
+});
+
 if (boardUrl) {
     const mobile = await ctxA.newPage();
     await mobile.setViewportSize({ width: 390, height: 780 });
@@ -232,5 +294,4 @@ if (boardUrl) {
 }
 
 await browser.close();
-console.log(results.join('\n'));
 process.exit(results.some((r) => !r.startsWith('PASS')) ? 1 : 0);

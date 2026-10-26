@@ -16,40 +16,6 @@ const list = ref(null);
 const others = computed(() => props.cards.filter((card) => card.id !== dnd.cardId));
 const isTarget = computed(() => dnd.cardId !== null && dnd.overColumnId === props.column.id);
 
-// --- drag and drop (native HTML5) ----------------------------------------
-
-function onDragOver(event) {
-    if (dnd.cardId === null) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-
-    const elements = [...list.value.querySelectorAll('[data-card-id]')].filter((el) => Number(el.dataset.cardId) !== dnd.cardId);
-    const index = elements.filter((el) => {
-        const rect = el.getBoundingClientRect();
-        return rect.top + rect.height / 2 < event.clientY;
-    }).length;
-
-    dnd.overColumnId = props.column.id;
-    dnd.overIndex = index;
-}
-
-function onDragLeave(event) {
-    if (!list.value.contains(event.relatedTarget) && dnd.overColumnId === props.column.id) {
-        dnd.overColumnId = null;
-        dnd.overIndex = null;
-    }
-}
-
-function onDrop(event) {
-    event.preventDefault();
-    if (dnd.cardId === null || dnd.overIndex === null) return;
-
-    const afterId = others.value[dnd.overIndex - 1]?.id ?? null;
-    board.moveCard(dnd.cardId, props.column.id, afterId);
-    dnd.overColumnId = null;
-    dnd.overIndex = null;
-}
-
 // --- add card -------------------------------------------------------------
 
 const adding = ref(false);
@@ -127,9 +93,6 @@ function remove() {
             ref="list"
             class="flex min-h-12 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2 transition-colors"
             :class="isTarget ? 'bg-indigo-50/60 dark:bg-indigo-500/5' : ''"
-            @dragover="onDragOver"
-            @dragleave="onDragLeave"
-            @drop="onDrop"
         >
             <template v-for="card in cards" :key="card.id">
                 <li v-if="isTarget && others[dnd.overIndex] && others[dnd.overIndex].id === card.id" class="h-1 shrink-0 rounded-full bg-indigo-500" aria-hidden="true" />

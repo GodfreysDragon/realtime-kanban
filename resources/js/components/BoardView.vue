@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, provide, reactive, ref, watch } from 'vue';
 import { useBoard } from '../composables/useBoard';
 import { useToasts } from '../composables/useToasts';
+import { startPointerDrag } from '../lib/pointerDrag';
 import KanbanColumn from './KanbanColumn.vue';
 import CardModal from './CardModal.vue';
 import ShareDialog from './ShareDialog.vue';
@@ -24,6 +25,79 @@ const showActivity = ref(window.matchMedia('(min-width: 1024px)').matches);
 provide('board', board);
 provide('dnd', dnd);
 provide('me', props.me);
+provide('cardMoves', { startDrag: startCardDrag, moveByKey: moveCardByKey });
+
+// --- moving cards: pointer drag ----------------------------------------------
+
+function startCardDrag(event, card, element) {
+    startPointerDrag(event, element, {
+        onStart() {
+            dnd.cardId = card.id;
+            board.setDragging(card.id);
+        },
+        onMove: hitTestCards,
+        onDrop() {
+            if (dnd.overColumnId === null) return;
+            const others = (board.cardsByColumn.value[dnd.overColumnId] ?? []).filter((c) => c.id !== card.id);
+            board.moveCard(card.id, dnd.overColumnId, others[dnd.overIndex - 1]?.id ?? null);
+        },
+        onEnd() {
+            Object.assign(dnd, { cardId: null, overColumnId: null, overIndex: null });
+            board.setDragging(null);
+        },
+    });
+}
+
+/** Which column, and which slot in it, is under the pointer. */
+function hitTestCards(x, y) {
+    const section = document.elementFromPoint(x, y)?.closest('section[data-column-id]');
+    if (!section) {
+        Object.assign(dnd, { overColumnId: null, overIndex: null });
+        return;
+    }
+
+    const cardsAbove = [...section.querySelectorAll('[data-card-id]')].filter((el) => {
+        if (Number(el.dataset.cardId) === dnd.cardId) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.top + rect.height / 2 < y;
+    });
+    Object.assign(dnd, { overColumnId: Number(section.dataset.columnId), overIndex: cardsAbove.length });
+}
+
+// --- moving cards: keyboard --------------------------------------------------
+
+const announcement = ref('');
+
+/** Alt+Arrow on a focused card: up/down within its column, left/right to the next column. */
+async function moveCardByKey(card, direction) {
+    const columns = board.columns.value;
+    const columnIndex = columns.findIndex((column) => column.id === card.column_id);
+    const siblings = board.cardsByColumn.value[card.column_id] ?? [];
+    const index = siblings.findIndex((c) => c.id === card.id);
+
+    let target = columns[columnIndex];
+    let afterId;
+    if (direction === 'up') {
+        if (index === 0) return;
+        afterId = siblings[index - 2]?.id ?? null;
+    } else if (direction === 'down') {
+        if (index === siblings.length - 1) return;
+        afterId = siblings[index + 1].id;
+    } else {
+        target = columns[columnIndex + (direction === 'left' ? -1 : 1)];
+        if (!target) return;
+        const targetCards = board.cardsByColumn.value[target.id] ?? [];
+        afterId = targetCards[Math.min(index, targetCards.length) - 1]?.id ?? null;
+    }
+
+    board.moveCard(card.id, target.id, afterId);
+
+    // A card that changed column is a new element; keep the keyboard on it.
+    await nextTick();
+    document.querySelector(`[data-card-id="${card.id}"]`)?.focus();
+    const placed = board.cardsByColumn.value[target.id];
+    announcement.value = `Moved “${card.title}” to position ${placed.findIndex((c) => c.id === card.id) + 1} of ${placed.length} in ${target.name}.`;
+}
 
 onBeforeUnmount(() => board.dispose());
 
@@ -166,9 +240,8 @@ function hidePointer() {
                     <div
                         ref="surface"
                         class="relative inline-flex min-h-full items-start gap-3 p-4"
-                        @mousemove="trackPointer"
-                        @dragover="trackPointer"
-                        @mouseleave="hidePointer"
+                        @pointermove="trackPointer"
+                        @pointerleave="hidePointer"
                     >
                         <KanbanColumn
                             v-for="column in board.columns.value"
@@ -201,6 +274,8 @@ function hidePointer() {
 
             <CardModal v-if="openCardId && board.cards[openCardId]" :key="openCardId" :card-id="openCardId" @close="openCardId = null" />
             <ShareDialog v-if="showShare" @close="showShare = false" />
+            <p id="card-move-hint" class="sr-only">Press Enter to open the card. Alt and the arrow keys move it.</p>
+            <p class="sr-only" aria-live="assertive">{{ announcement }}</p>
         </template>
 
         <div v-else class="p-8 text-sm text-slate-500">Loading board…</div>

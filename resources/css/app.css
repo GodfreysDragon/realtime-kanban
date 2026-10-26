@@ -7,3 +7,10 @@
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
         'Segoe UI Symbol', 'Noto Color Emoji';
 }
+
+/* While a card or column is being dragged (lib/pointerDrag.js). */
+.is-dragging,
+.is-dragging * {
+    cursor: grabbing !important;
+    user-select: none;
+}

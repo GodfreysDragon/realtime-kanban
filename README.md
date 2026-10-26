@@ -150,8 +150,22 @@ Events implement `ShouldBroadcastNow`. Queued broadcasts with several workers ca
 "created"), and the cost of handing a message to a local Reverb server inside the request is a few milliseconds. A
 high-traffic deployment would use a single ordered queue or a per-board sequence number instead.
 
+### Drag and drop on Pointer Events
+The native HTML5 drag API never fires for touch, so cards are dragged with Pointer Events instead
+(`resources/js/lib/pointerDrag.js`), which covers mouse, touch and pen with one code path:
+- With a mouse or pen, the drag starts after a few pixels of movement, so a plain click still opens the card.
+- On a touch screen it starts after a 300 ms press without moving. Moving sooner is a scroll, so the board stays
+  scrollable by swiping across cards. Once a drag starts, the first `touchmove` is cancelled so the page doesn't scroll
+  under the finger.
+- A copy of the card follows the pointer, scroll containers under it scroll near their edges, and Escape cancels.
+- The board decides what's under the pointer (`elementFromPoint`) and reuses the same drop indicator and `moveCard`
+  call as before.
+
 ### Keyboard and screen readers
 - Cards open with Enter or Space.
+- Alt+↑/↓ moves the focused card within its column, and Alt+←/→ moves it to the same position in the neighbouring
+  column. Focus stays on the card, and the new position is announced (“Moved “Press kit” to position 2 of 3 in
+  Review”).
 - The card dialog keeps Tab inside it and returns focus to the card when it closes.
 - Escape, Cancel or a click outside ask before throwing away unsaved edits.
 - Board and column names are renamed through real buttons.
@@ -183,7 +197,7 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - presence;
   - card creation;
   - live cursors;
-  - HTML5 drag and drop;
+  - drag and drop between columns;
   - the activity feed;
   - editing badges;
   - the full 409 conflict flow;
@@ -191,6 +205,9 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - sequence numbers: ordinary traffic causes no resync, and a message dropped on an open socket is noticed and
     resynced;
   - keyboard: Enter opens a card, focus stays in the dialog, Escape returns focus to the card;
+  - keyboard moves: Alt+Arrow moves a card to another column, keeps focus on it and announces it;
+  - reordering within a column by mouse;
+  - touch, through Chrome's DevTools protocol: a long press then drag moves a card, a quick swipe scrolls instead;
   - delete propagation, including closing the dialog of someone who had the card open;
   - removing a member, whose tab is sent back to the board list.
 
@@ -207,15 +224,12 @@ starts Reverb and the app server first.
   Fortify or a starter kit.
 - **Members and the owner are the only roles.** There are no read-only members, and a board's ownership can't be
   transferred.
-- **Drag and drop uses the native HTML5 API**, which touch screens don't support. On mobile, cards can be moved with the
-  *Column* select in the card dialog.
 - **One Reverb server.** Scaling across several servers (Redis pub/sub) isn't configured; Reverb supports it with
   `REVERB_SCALING_ENABLED`.
 
 ## What's next
 
 1. Column reordering by drag, using the same fractional-index approach.
-2. Touch drag and drop (e.g. SortableJS) and keyboard reordering inside a column.
 
 ## License
 
