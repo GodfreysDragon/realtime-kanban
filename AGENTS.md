@@ -28,7 +28,9 @@ npm run test:e2e                 # two-browser test; needs `php artisan serve` a
   breaks.
 - **Access goes through `BoardPolicy`.** `view` guards the API (in form requests' `authorize()` or `Gate::authorize`)
   and the presence channel callback alike; a new endpoint on a board must check it too.
-- **Positions are fractional.** Use `App\Services\CardPositioner`; don't renumber a column anywhere else.
+- **Positions are fractional.** Use `App\Services\FractionalIndex` (cards go through `CardPositioner`); don't renumber
+  a list anywhere else, and pass it a sibling query scoped to the list.
+- **Moves of one item are serialised on the client** (`sendMove` in `useBoard.js`); keep new move-like actions on it.
 - **The client snapshot is the source of truth.** It is re-fetched whenever the presence channel (re)subscribes; see
   the header comment in `resources/js/composables/useBoard.js`.
 

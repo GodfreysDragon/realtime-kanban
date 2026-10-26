@@ -17,7 +17,9 @@ const props = defineProps({
 });
 
 const board = useBoard(props.boardId, props.me);
-const dnd = reactive({ cardId: null, overColumnId: null, overIndex: null });
+// What is being dragged and where it would land: a card into a column slot,
+// or a column into a slot between columns.
+const dnd = reactive({ cardId: null, overColumnId: null, overIndex: null, columnId: null, overColumnIndex: null });
 const openCardId = ref(null);
 const showShare = ref(false);
 const showActivity = ref(window.matchMedia('(min-width: 1024px)').matches);
@@ -26,6 +28,7 @@ provide('board', board);
 provide('dnd', dnd);
 provide('me', props.me);
 provide('cardMoves', { startDrag: startCardDrag, moveByKey: moveCardByKey });
+provide('columnMoves', { startDrag: startColumnDrag, moveByKey: moveColumnByKey });
 
 // --- moving cards: pointer drag ----------------------------------------------
 
@@ -62,6 +65,55 @@ function hitTestCards(x, y) {
         return rect.top + rect.height / 2 < y;
     });
     Object.assign(dnd, { overColumnId: Number(section.dataset.columnId), overIndex: cardsAbove.length });
+}
+
+// --- moving columns -----------------------------------------------------------
+
+/** Columns other than the one being dragged; drop slots are relative to these. */
+const otherColumns = computed(() => board.columns.value.filter((column) => column.id !== dnd.columnId));
+
+/** The column the drop indicator goes in front of, or 'end' for after the last one. */
+const columnDropBefore = computed(() => {
+    if (dnd.columnId === null || dnd.overColumnIndex === null) return null;
+    return otherColumns.value[dnd.overColumnIndex]?.id ?? 'end';
+});
+
+function startColumnDrag(event, column, element) {
+    startPointerDrag(event, element, {
+        onStart() {
+            dnd.columnId = column.id;
+        },
+        onMove(x) {
+            const before = [...document.querySelectorAll('section[data-column-id]')].filter((el) => {
+                if (Number(el.dataset.columnId) === column.id) return false;
+                const rect = el.getBoundingClientRect();
+                return rect.left + rect.width / 2 < x;
+            });
+            dnd.overColumnIndex = before.length;
+        },
+        onDrop() {
+            if (dnd.overColumnIndex === null) return;
+            board.moveColumn(column.id, otherColumns.value[dnd.overColumnIndex - 1]?.id ?? null);
+        },
+        onEnd() {
+            Object.assign(dnd, { columnId: null, overColumnIndex: null });
+        },
+    });
+}
+
+/** Alt+←/→ on a column's name moves the column one place. */
+async function moveColumnByKey(column, direction) {
+    const columns = board.columns.value;
+    const index = columns.findIndex((c) => c.id === column.id);
+    if (direction === 'left' ? index === 0 : index === columns.length - 1) return;
+
+    const afterId = direction === 'left' ? (columns[index - 2]?.id ?? null) : columns[index + 1].id;
+    board.moveColumn(column.id, afterId);
+
+    await nextTick();
+    document.querySelector(`[data-column-id="${column.id}"] h2 button`)?.focus();
+    const placed = board.columns.value;
+    announcement.value = `Moved column “${column.name}” to position ${placed.findIndex((c) => c.id === column.id) + 1} of ${placed.length}.`;
 }
 
 // --- moving cards: keyboard --------------------------------------------------
@@ -243,13 +295,11 @@ function hidePointer() {
                         @pointermove="trackPointer"
                         @pointerleave="hidePointer"
                     >
-                        <KanbanColumn
-                            v-for="column in board.columns.value"
-                            :key="column.id"
-                            :column="column"
-                            :cards="board.cardsByColumn.value[column.id] ?? []"
-                            @open="openCardId = $event"
-                        />
+                        <template v-for="column in board.columns.value" :key="column.id">
+                            <div v-if="columnDropBefore === column.id" class="w-1 shrink-0 self-stretch rounded-full bg-indigo-500" aria-hidden="true" />
+                            <KanbanColumn :column="column" :cards="board.cardsByColumn.value[column.id] ?? []" @open="openCardId = $event" />
+                        </template>
+                        <div v-if="columnDropBefore === 'end'" class="w-1 shrink-0 self-stretch rounded-full bg-indigo-500" aria-hidden="true" />
 
                         <form class="w-72 shrink-0 rounded-xl border-2 border-dashed border-slate-200 p-2 dark:border-slate-800" @submit.prevent="addColumn">
                             <input
@@ -275,6 +325,7 @@ function hidePointer() {
             <CardModal v-if="openCardId && board.cards[openCardId]" :key="openCardId" :card-id="openCardId" @close="openCardId = null" />
             <ShareDialog v-if="showShare" @close="showShare = false" />
             <p id="card-move-hint" class="sr-only">Press Enter to open the card. Alt and the arrow keys move it.</p>
+            <p id="column-move-hint" class="sr-only">Press Enter to rename the column. Alt and the left or right arrow keys move it.</p>
             <p class="sr-only" aria-live="assertive">{{ announcement }}</p>
         </template>
 

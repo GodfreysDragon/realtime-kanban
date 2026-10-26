@@ -7,7 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\BoardResource;
 use App\Models\Board;
 use App\Services\BoardActivity;
-use App\Services\CardPositioner;
+use App\Services\FractionalIndex;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -36,7 +36,7 @@ class BoardController extends Controller
             $board->addMember($request->user(), Board::OWNER);
 
             foreach (self::DEFAULT_COLUMNS as $i => $name) {
-                $board->columns()->create(['name' => $name, 'position' => ($i + 1) * CardPositioner::GAP]);
+                $board->columns()->create(['name' => $name, 'position' => ($i + 1) * FractionalIndex::GAP]);
             }
 
             return $board;

@@ -10,6 +10,20 @@ const emit = defineEmits(['open']);
 
 const board = inject('board');
 const dnd = inject('dnd');
+const columnMoves = inject('columnMoves');
+const section = ref(null);
+
+/** The header is the column's drag handle, except for the controls on it. */
+function onHeaderPointerDown(event) {
+    if (event.target.closest('input, [data-no-drag]')) return;
+    columnMoves.startDrag(event, props.column, section.value);
+}
+
+function onNameKeydown(event) {
+    if (!event.altKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    columnMoves.moveByKey(props.column, event.key === 'ArrowLeft' ? 'left' : 'right');
+}
 const list = ref(null);
 
 // Cards other than the one being dragged; drop indexes are relative to these.
@@ -64,8 +78,13 @@ function remove() {
 </script>
 
 <template>
-    <section class="flex max-h-[calc(100dvh-9rem)] w-72 shrink-0 flex-col rounded-xl bg-slate-100 dark:bg-slate-900" :data-column-id="column.id">
-        <header class="group flex items-center gap-2 px-3 pt-3 pb-2">
+    <section
+        ref="section"
+        class="flex max-h-[calc(100dvh-9rem)] w-72 shrink-0 flex-col rounded-xl bg-slate-100 dark:bg-slate-900"
+        :class="dnd.columnId === column.id ? 'opacity-40' : ''"
+        :data-column-id="column.id"
+    >
+        <header class="group flex cursor-grab items-center gap-2 px-3 pt-3 pb-2 select-none [-webkit-touch-callout:none]" @pointerdown="onHeaderPointerDown">
             <input
                 v-if="renaming"
                 ref="nameInput"
@@ -77,10 +96,20 @@ function remove() {
                 @blur="finishRename"
             />
             <h2 v-else class="min-w-0 flex-1 truncate text-sm font-semibold">
-                <button type="button" class="w-full cursor-text truncate rounded text-left" title="Rename column" @click="startRename">{{ column.name }}</button>
+                <button
+                    type="button"
+                    class="w-full cursor-text truncate rounded text-left"
+                    title="Rename column"
+                    aria-describedby="column-move-hint"
+                    @click="startRename"
+                    @keydown="onNameKeydown"
+                >
+                    {{ column.name }}
+                </button>
             </h2>
             <span class="rounded-full bg-slate-200 px-2 text-xs text-slate-600 tabular-nums dark:bg-slate-800 dark:text-slate-300">{{ cards.length }}</span>
             <button
+                data-no-drag
                 class="rounded p-0.5 text-slate-500 opacity-0 group-hover:opacity-100 hover:bg-slate-200 hover:text-red-600 focus:opacity-100 [@media(hover:none)]:opacity-100 dark:text-slate-400 dark:hover:bg-slate-800"
                 :aria-label="`Delete column ${column.name}`"
                 @click="remove"

@@ -61,6 +61,10 @@ export function useBoard(boardId, me) {
     let gapTimer = null;
     let loadSeq = 0;
     let disposed = false;
+    // Moves of one card or column ("card:12") are sent one at a time. Two
+    // requests in flight together can be processed in either order, leaving
+    // the server on the older move while this tab shows the newer one.
+    const moveQueues = {};
     let myEditingCardId = null;
 
     const sortedColumns = computed(() => Object.values(columns).sort(byPosition));
@@ -220,6 +224,15 @@ export function useBoard(boardId, me) {
                 }
             }),
         )
+        .listen('.column.moved', buffered(({ column }) => (columns[column.id] = column)))
+        .listen(
+            '.columns.rebalanced',
+            buffered(({ positions }) => {
+                for (const [id, position] of Object.entries(positions)) {
+                    if (columns[id]) columns[id].position = position;
+                }
+            }),
+        )
         .listen('.board.renamed', buffered(({ name }) => board.value && (board.value.name = name)))
         .listen('.activity.recorded', buffered(({ activity }) => pushActivity(activity)))
         // Not buffered: losing access matters even mid-resync. On a public
@@ -322,10 +335,37 @@ export function useBoard(boardId, me) {
         card.column_id = columnId;
         card.position = positionBetween(siblings[index - 1]?.position, siblings[index]?.position);
 
-        return guarded(async () => {
-            const { data } = await api('PATCH', `/api/cards/${cardId}/move`, { column_id: columnId, after_id: afterId ?? null });
-            upsertCard(data);
-        }, 'Could not move the card.');
+        sendMove(
+            `card:${cardId}`,
+            () => api('PATCH', `/api/cards/${cardId}/move`, { column_id: columnId, after_id: afterId ?? null }),
+            upsertCard,
+            'Could not move the card.',
+        );
+    }
+
+    /**
+     * Send a move, or if one for the same item is still in flight, send this
+     * one when it returns. Only the newest waiting move is kept: each was
+     * computed from the board as it looked after the moves before it. A
+     * response is applied only if no newer move is waiting to replace it.
+     */
+    function sendMove(key, send, apply, failureMessage) {
+        const queue = (moveQueues[key] ??= { busy: false, next: null });
+        if (queue.busy) {
+            queue.next = { send, apply, failureMessage };
+            return;
+        }
+
+        queue.busy = true;
+        guarded(async () => {
+            const { data } = await send();
+            if (!queue.next) apply(data);
+        }, failureMessage).finally(() => {
+            queue.busy = false;
+            const next = queue.next;
+            queue.next = null;
+            if (next) sendMove(key, next.send, next.apply, next.failureMessage);
+        });
     }
 
     function positionIsBetween(card, siblings, index) {
@@ -349,6 +389,25 @@ export function useBoard(boardId, me) {
     function renameColumn(columnId, name) {
         columns[columnId].name = name;
         return guarded(() => api('PUT', `/api/columns/${columnId}`, { name }), 'Could not rename the column.');
+    }
+
+    function moveColumn(columnId, afterId) {
+        const others = sortedColumns.value.filter((column) => column.id !== columnId);
+        const index = afterId == null ? 0 : others.findIndex((column) => column.id === afterId) + 1;
+        const column = columns[columnId];
+
+        const lower = others[index - 1]?.position ?? -Infinity;
+        const upper = others[index]?.position ?? Infinity;
+        if (column.position > lower && column.position < upper) return;
+
+        column.position = positionBetween(others[index - 1]?.position, others[index]?.position);
+
+        sendMove(
+            `column:${columnId}`,
+            () => api('PATCH', `/api/columns/${columnId}/move`, { after_id: afterId ?? null }),
+            (column) => (columns[columnId] = column),
+            'Could not move the column.',
+        );
     }
 
     function deleteColumn(columnId) {
@@ -403,6 +462,7 @@ export function useBoard(boardId, me) {
         deleteCard,
         addColumn,
         renameColumn,
+        moveColumn,
         deleteColumn,
         renameBoard,
         sendCursor,

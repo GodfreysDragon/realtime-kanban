@@ -6,7 +6,7 @@ use App\Models\Activity;
 use App\Models\Board;
 use App\Models\Card;
 use App\Models\User;
-use App\Services\CardPositioner;
+use App\Services\FractionalIndex;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -33,7 +33,7 @@ class DatabaseSeeder extends Seeder
 
         $columnPosition = 0;
         foreach ($columns as $name => $cards) {
-            $column = $board->columns()->create(['name' => $name, 'position' => $columnPosition += CardPositioner::GAP]);
+            $column = $board->columns()->create(['name' => $name, 'position' => $columnPosition += FractionalIndex::GAP]);
 
             foreach ($cards as $i => [$title, $label]) {
                 Card::create([
@@ -41,7 +41,7 @@ class DatabaseSeeder extends Seeder
                     'column_id' => $column->id,
                     'title' => $title,
                     'label' => $label,
-                    'position' => ($i + 1) * CardPositioner::GAP,
+                    'position' => ($i + 1) * FractionalIndex::GAP,
                     'created_by' => $owner->id,
                     'updated_by' => $owner->id,
                 ]);
