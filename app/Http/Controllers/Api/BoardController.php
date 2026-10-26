@@ -50,7 +50,12 @@ class BoardController extends Controller
     /**
      * The full snapshot a client renders from. Clients also re-fetch this
      * after a WebSocket reconnect, since events sent while they were offline
-     * are not replayed.
+     * are not replayed, and when they notice a gap in the sequence numbers.
+     *
+     * Order matters: the board row (and its event_seq) was read by route
+     * binding before the columns and cards below, so every event numbered
+     * up to that seq is already reflected in them. The client drops those
+     * events and applies only later ones.
      */
     public function show(Request $request, Board $board): BoardResource
     {

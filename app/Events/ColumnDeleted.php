@@ -14,7 +14,7 @@ class ColumnDeleted extends BoardEvent
         return 'column.deleted';
     }
 
-    public function broadcastWith(): array
+    public function payload(): array
     {
         return ['id' => $this->columnId];
     }

@@ -23,6 +23,9 @@ npm run test:e2e                 # two-browser test; needs `php artisan serve` a
   sends `X-Socket-ID`. Activity, rebalance and member-removed events are the exceptions: they go to everyone.
 - **Card content edits are conditional on `version`** (`UPDATE … WHERE version = ?`, 409 on mismatch). Moves are
   last-writer-wins and do not bump `version`, so a drag never turns into an edit conflict.
+- **Board events extend `BoardEvent` and implement `payload()`.** The base class adds the board's sequence number;
+  construct the event only after the change has committed, or the snapshot ordering argument in `BoardController::show`
+  breaks.
 - **Access goes through `BoardPolicy`.** `view` guards the API (in form requests' `authorize()` or `Gate::authorize`)
   and the presence channel callback alike; a new endpoint on a board must check it too.
 - **Positions are fractional.** Use `App\Services\CardPositioner`; don't renumber a column anywhere else.

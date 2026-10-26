@@ -15,6 +15,7 @@ class BoardResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'public' => $this->public,
+            'seq' => (int) $this->event_seq,
             'role' => $this->whenHas('viewer_role'),
             'invite_token' => $this->when($this->viewer_role !== null, fn () => $this->invite_token),
             'cards_count' => $this->whenCounted('cards'),

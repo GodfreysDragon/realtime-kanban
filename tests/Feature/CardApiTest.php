@@ -309,6 +309,6 @@ class CardApiTest extends TestCase
         $this->deleteJson("/api/cards/{$card->id}")->assertNoContent();
 
         $this->assertModelMissing($card);
-        Event::assertDispatched(CardDeleted::class, fn ($e) => $e->broadcastWith() === ['id' => $card->id] && $e->broadcastAs() === 'card.deleted');
+        Event::assertDispatched(CardDeleted::class, fn ($e) => $e->payload() === ['id' => $card->id] && $e->broadcastAs() === 'card.deleted');
     }
 }

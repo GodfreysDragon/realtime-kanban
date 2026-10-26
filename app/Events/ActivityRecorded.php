@@ -21,7 +21,7 @@ class ActivityRecorded extends BoardEvent
         return 'activity.recorded';
     }
 
-    public function broadcastWith(): array
+    public function payload(): array
     {
         return ['activity' => ActivityResource::make($this->activity->loadMissing('user'))->resolve()];
     }

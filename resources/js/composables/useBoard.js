@@ -1,10 +1,15 @@
 import { computed, reactive, ref } from 'vue';
-import { api } from '../lib/api';
+import { api, onBoardEvents } from '../lib/api';
 import { connection, echo } from '../lib/echo';
 import { byPosition, positionBetween } from '../lib/positions';
 import { useToasts } from './useToasts';
 
 const CURSOR_TTL_MS = 10_000;
+
+// How long a missing sequence number may stay missing before we stop waiting
+// for it and re-fetch. Events from concurrent requests can arrive slightly
+// out of order, and our own requests report theirs only when they return.
+const GAP_GRACE_MS = 3_000;
 
 /**
  * All state for one open board, kept in sync over the board's presence channel.
@@ -22,6 +27,12 @@ const CURSOR_TTL_MS = 10_000;
  *    are buffered while a snapshot loads and replayed after it.
  *  - Pusher-protocol servers don't replay messages missed while offline, but
  *    every reconnect re-subscribes, so the same hook re-fetches the snapshot.
+ *  - Every server event carries the board's sequence number (seq). Events
+ *    the snapshot already includes are dropped. A number that stays missing
+ *    for GAP_GRACE_MS means a message was lost without a disconnect, and the
+ *    snapshot is fetched again. Our own requests report the numbers of the
+ *    events they sent to everyone else (X-Board-Events), so those don't look
+ *    like gaps.
  *  - Ephemeral state (cursors, who is editing or dragging which card) never
  *    touches the server. It travels as client "whispers" between browsers.
  */
@@ -44,6 +55,10 @@ export function useBoard(boardId, me) {
     const removed = ref(false);
 
     let pending = [];
+    let snapshotSeq = 0; // events up to here are already in the snapshot
+    let contiguousSeq = 0; // every number up to here has been accounted for
+    const aheadSeqs = new Set(); // numbers seen beyond a gap
+    let gapTimer = null;
     let loadSeq = 0;
     let disposed = false;
     let myEditingCardId = null;
@@ -89,6 +104,7 @@ export function useBoard(boardId, me) {
         try {
             const { data } = await api('GET', `/api/boards/${boardId}`);
             if (seq !== loadSeq) return;
+            snapshotTaken(data.seq);
             board.value = { id: data.id, name: data.name, public: data.public, role: data.role, inviteToken: data.invite_token ?? null };
             replace(columns, data.columns);
             replace(cards, data.cards);
@@ -111,14 +127,58 @@ export function useBoard(boardId, me) {
         }
     }
 
+    // --- sequence numbers --------------------------------------------------
+
+    function noteSeq(seq) {
+        if (seq == null || seq <= contiguousSeq) return;
+        aheadSeqs.add(seq);
+        advanceSeq();
+    }
+
+    function advanceSeq() {
+        const before = contiguousSeq;
+        while (aheadSeqs.has(contiguousSeq + 1)) aheadSeqs.delete(++contiguousSeq);
+
+        // Restart the clock whenever the gap moves, so each gap gets the full grace period.
+        if (aheadSeqs.size === 0 || contiguousSeq !== before) {
+            clearTimeout(gapTimer);
+            gapTimer = null;
+        }
+        if (aheadSeqs.size > 0 && !gapTimer) gapTimer = setTimeout(onGap, GAP_GRACE_MS);
+    }
+
+    function onGap() {
+        gapTimer = null;
+        if (aheadSeqs.size > 0) load();
+    }
+
+    function snapshotTaken(seq) {
+        snapshotSeq = seq;
+        if (seq > contiguousSeq) contiguousSeq = seq;
+        for (const ahead of aheadSeqs) if (ahead <= contiguousSeq) aheadSeqs.delete(ahead);
+        advanceSeq();
+    }
+
+    const stopEventHeader = onBoardEvents((events) => {
+        for (const [eventBoardId, seq] of events) if (eventBoardId === boardId) noteSeq(seq);
+    });
+
     function replace(target, rows) {
         for (const key of Object.keys(target)) delete target[key];
         for (const row of rows) target[row.id] = row;
     }
 
-    /** Wrap a server-event handler so it's deferred while a snapshot loads. */
+    /**
+     * Wrap a server-event handler: deferred while a snapshot loads, dropped
+     * if the snapshot it lands on already includes it.
+     */
     function buffered(handler) {
-        return (payload) => (loading.value ? pending.push(() => handler(payload)) : handler(payload));
+        const apply = (payload) => {
+            noteSeq(payload.seq);
+            if (payload.seq <= snapshotSeq) return;
+            handler(payload);
+        };
+        return (payload) => (loading.value ? pending.push(() => apply(payload)) : apply(payload));
     }
 
     // --- channel ---------------------------------------------------------
@@ -164,7 +224,8 @@ export function useBoard(boardId, me) {
         .listen('.activity.recorded', buffered(({ activity }) => pushActivity(activity)))
         // Not buffered: losing access matters even mid-resync. On a public
         // board you can still see it, you just stop being a member.
-        .listen('.member.removed', ({ user_id }) => {
+        .listen('.member.removed', ({ user_id, seq }) => {
+            noteSeq(seq);
             if (user_id !== me.id) return;
             if (board.value?.public) Object.assign(board.value, { role: null, inviteToken: null });
             else removed.value = true;
@@ -217,6 +278,8 @@ export function useBoard(boardId, me) {
 
     function dispose() {
         disposed = true;
+        stopEventHeader();
+        clearTimeout(gapTimer);
         clearInterval(staleCursorTimer);
         connection.unbind('state_change', onStateChange);
         echo.leave(channelName);

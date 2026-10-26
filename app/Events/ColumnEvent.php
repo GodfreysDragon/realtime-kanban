@@ -15,7 +15,7 @@ abstract class ColumnEvent extends BoardEvent
         parent::__construct($column->board_id);
     }
 
-    public function broadcastWith(): array
+    public function payload(): array
     {
         return ['column' => ColumnResource::make($this->column)->resolve()];
     }

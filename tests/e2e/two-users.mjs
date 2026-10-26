@@ -36,9 +36,12 @@ const ctxA = await browser.newContext({ viewport: { width: 1400, height: 850 } }
 const ctxB = await browser.newContext({ viewport: { width: 1400, height: 850 } });
 const a = await ctxA.newPage();
 const b = await ctxB.newPage();
+// Board snapshot fetches per page, to tell a deliberate resync from none.
+const snapshots = { A: 0, B: 0 };
 for (const [who, page] of [['A', a], ['B', b]]) {
     page.on('pageerror', (e) => results.push(`PAGE ERROR ${who}: ${e.message}`));
     page.on('dialog', (d) => d.accept());
+    page.on('request', (r) => r.method() === 'GET' && /\/api\/boards\/\d+$/.test(r.url()) && snapshots[who]++);
 }
 
 async function join(page, name) {
@@ -162,6 +165,34 @@ await step('keyboard: Enter opens a card, Tab stays in the dialog, Escape return
     await a.keyboard.press('Escape');
     await a.waitForSelector('[role=dialog]', { state: 'detached' });
     if (!(await a.evaluate(() => document.activeElement?.hasAttribute('data-card-id')))) throw new Error('focus did not return to the card');
+});
+
+await step('sequence numbers: ordinary traffic in both directions causes no resync', async () => {
+    const before = { ...snapshots };
+    await addCard(a, 'Done', 'Numbered by Ada');
+    await card(b, 'Numbered by Ada').waitFor({ timeout: 5000 });
+    await addCard(b, 'Done', 'Numbered by Bob');
+    await card(a, 'Numbered by Bob').waitFor({ timeout: 5000 });
+    await a.waitForTimeout(3500); // longer than the client's gap grace period
+    if (snapshots.A !== before.A || snapshots.B !== before.B) throw new Error(`unexpected resync: ${JSON.stringify({ before, after: snapshots })}`);
+});
+
+await step('sequence numbers: a message lost without a disconnect is noticed and resynced', async () => {
+    // Swallow the next card.created on Bob's socket, as a flaky proxy might.
+    await b.evaluate(() => {
+        const id = window.location.hash.match(/boards\/(\d+)/)[1];
+        const channel = window.Pusher.instances[0].channel(`presence-board.${id}`);
+        const handle = channel.handleEvent.bind(channel);
+        let dropped = false;
+        channel.handleEvent = (event) => {
+            if (!dropped && event.event === 'card.created') return (dropped = true);
+            return handle(event);
+        };
+    });
+    const before = snapshots.B;
+    await addCard(a, 'Done', 'Lost in transit');
+    await card(b, 'Lost in transit').waitFor({ timeout: 8000 });
+    if (snapshots.B === before) throw new Error('the card arrived without a resync, so the message was not dropped');
 });
 
 await step('delete propagates and closes the dialog Bob has open', async () => {

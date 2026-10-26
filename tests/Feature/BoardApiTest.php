@@ -86,7 +86,7 @@ class BoardApiTest extends TestCase
         $this->putJson("/api/boards/{$board->id}", ['name' => 'Renamed'])->assertOk();
 
         $this->assertSame('Renamed', $board->fresh()->name);
-        Event::assertDispatched(BoardRenamed::class, fn ($e) => $e->broadcastWith() === ['name' => 'Renamed']);
+        Event::assertDispatched(BoardRenamed::class, fn ($e) => $e->payload() === ['name' => 'Renamed']);
     }
 
     public function test_columns_can_be_added_renamed_and_deleted(): void
@@ -110,7 +110,7 @@ class BoardApiTest extends TestCase
 
         $this->assertDatabaseMissing('columns', ['id' => $columnId]);
         $this->assertSame(0, Card::where('column_id', $columnId)->count());
-        Event::assertDispatched(ColumnDeleted::class, fn ($e) => $e->broadcastWith() === ['id' => $columnId]);
+        Event::assertDispatched(ColumnDeleted::class, fn ($e) => $e->payload() === ['id' => $columnId]);
         Event::assertDispatched(ActivityRecorded::class, fn ($e) => str_contains($e->activity->description, 'and its 1 card'));
     }
 }

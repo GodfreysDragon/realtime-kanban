@@ -79,6 +79,7 @@ Set `REVERB_ALLOWED_ORIGINS` to the comma-separated hosts allowed to open WebSoc
 | "Ada is editing" and "Ada is moving" badges | Whispers (`client-editing`, `client-dragging`) |
 | Activity feed | `activity.recorded` event, sent to everyone including the actor |
 | Connection status and resync | pusher-js `state_change` drives the badge. Every (re)subscription to the channel fetches the board snapshot again |
+| Lost messages | Every event carries a per-board sequence number; a gap that doesn't fill within 3 s triggers a resync |
 
 ## Design decisions
 
@@ -89,6 +90,17 @@ first paint and again when the channel subscription succeeds, because only a sna
 guaranteed not to miss an event. While a snapshot is loading, incoming events are buffered and replayed after it, and if
 loads overlap only the newest is applied. Pusher-protocol servers don't replay missed messages, but every reconnect
 re-subscribes, so the same hook fetches the snapshot again.
+
+### Sequence numbers
+Reconnects are covered by re-fetching, but a message can also go missing while the socket stays up. Every event
+therefore takes the board's next sequence number (`boards.event_seq`, `App\Services\BoardSequence`) when it is
+created, which is after the change it describes has committed. The snapshot reports the board's number, read before
+its data, so it already contains every event up to that number: the client drops those and applies only later ones.
+
+The client tracks the highest number up to which it has seen everything. A number that stays missing for 3 seconds
+means a lost message, and the snapshot is fetched again. The grace period absorbs events from concurrent requests
+arriving slightly out of order. Events sent `->toOthers()` never reach the tab that caused them, so every response
+lists the numbers it broadcast in an `X-Board-Events` header (`board:seq,…`), and that tab counts them as seen.
 
 ### No echo of your own changes
 The client applies its own changes optimistically. Every API call sends `X-Socket-ID`, and the server broadcasts with
@@ -149,7 +161,7 @@ high-traffic deployment would use a single ordered queue or a per-board sequence
 ## Tests
 
 ```sh
-php artisan test          # 44 PHPUnit feature tests
+php artisan test          # 49 PHPUnit feature tests
 npm run test:e2e          # two headless browsers against a running app + Reverb (see below)
 ```
 
@@ -159,6 +171,7 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - board, column and card CRUD;
   - broadcast dispatch, payloads and `toOthers` socket exclusion;
   - version conflicts;
+  - sequence numbers: one per broadcast, per board, reported in the snapshot and the `X-Board-Events` header;
   - races where another request commits mid-move, reproduced deterministically by hooking Eloquent's `retrieved`
     event;
   - fractional positioning, including a 60-drop stress test that forces a rebalance;
@@ -175,6 +188,8 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - editing badges;
   - the full 409 conflict flow;
   - disconnect → missed event → reconnect → resync;
+  - sequence numbers: ordinary traffic causes no resync, and a message dropped on an open socket is noticed and
+    resynced;
   - keyboard: Enter opens a card, focus stays in the dialog, Escape returns focus to the card;
   - delete propagation, including closing the dialog of someone who had the card open;
   - removing a member, whose tab is sent back to the board list.
@@ -201,7 +216,6 @@ starts Reverb and the app server first.
 
 1. Column reordering by drag, using the same fractional-index approach.
 2. Touch drag and drop (e.g. SortableJS) and keyboard reordering inside a column.
-3. A per-board event sequence number, so clients can spot gaps and resync without waiting for a reconnect.
 
 ## License
 
