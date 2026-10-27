@@ -249,6 +249,24 @@ await step('delete propagates and closes the dialog Bob has open', async () => {
     if (await a.locator('text=That card was deleted by someone else.').count()) throw new Error('the deleter was told someone else deleted it');
 });
 
+await step('whispers: a client cannot speak for someone else', async () => {
+    // A modified client claims to be Ada while flagging a card as being
+    // edited. The server stamps whispers with the sender's real id, so Ada
+    // sees Bob's name on it rather than her own (which her UI would hide).
+    const trigger = (payload) => b.evaluate(async (payload) => {
+        const id = window.location.hash.match(/boards\/(\d+)/)[1];
+        const res = await fetch(`/api/boards/${id}/members`, { headers: { Accept: 'application/json' } });
+        const ada = (await res.json()).data.find((m) => m.name === 'Ada');
+        const cardId = Number(document.querySelector('[data-card-id]').dataset.cardId);
+        window.Pusher.instances[0].channel(`presence-board.${id}`).trigger('client-editing', { userId: ada.id, cardId, ...payload });
+    }, payload);
+    const badge = a.locator('[data-card-id]').first().locator('text=Bob is editing');
+    await trigger({});
+    await badge.waitFor({ timeout: 5000 });
+    await trigger({ cardId: null });
+    await badge.waitFor({ state: 'detached', timeout: 5000 });
+});
+
 await a.mouse.move(700, 300);
 await b.mouse.move(400, 250);
 await a.waitForTimeout(400);
@@ -256,6 +274,14 @@ await a.screenshot({ path: `${OUT}/ada.png` });
 await b.screenshot({ path: `${OUT}/bob.png` });
 
 await step('membership: Ada removes Bob, and Bob is sent back to his boards', async () => {
+    // Play a modified client that ignores the removal: keep the subscription
+    // when the app leaves, and log every board event the socket still gets.
+    await b.evaluate(() => {
+        const pusher = window.Pusher.instances[0];
+        pusher.unsubscribe = () => {};
+        window.leaked = [];
+        pusher.connection.bind('message', (event) => window.watchLeaks && event.channel?.startsWith('presence-board.') && window.leaked.push(event.event));
+    });
     await a.click('button:has-text("Share")');
     await a.locator('[data-testid=members] li', { hasText: 'Bob' }).locator('text=Remove').click();
     await a.locator('[data-testid=members] li', { hasText: 'Bob' }).waitFor({ state: 'detached', timeout: 5000 });
@@ -264,6 +290,15 @@ await step('membership: Ada removes Bob, and Bob is sent back to his boards', as
     await b.locator('text=You were removed from this board.').waitFor({ timeout: 5000 });
     await b.waitForSelector('text=Boards');
     if (await b.locator('a', { hasText: 'E2E board' }).count()) throw new Error('the board is still in Bob\'s list');
+});
+
+await step('membership: the removed member\'s socket stops receiving the board', async () => {
+    await b.evaluate(() => (window.watchLeaks = true));
+    await addCard(a, 'Done', 'After Bob left');
+    await card(a, 'After Bob left').waitFor({ timeout: 5000 });
+    await b.waitForTimeout(2000);
+    const leaked = await b.evaluate(() => window.leaked);
+    if (leaked.length) throw new Error(`Bob's socket still got ${leaked.join(', ')}`);
 });
 
 await step('touch: a long press drags a card to another column, a quick swipe scrolls instead', async () => {

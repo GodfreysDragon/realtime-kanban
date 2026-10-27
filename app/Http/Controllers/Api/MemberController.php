@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Board;
 use App\Models\User;
 use App\Services\BoardActivity;
+use App\Services\LiveConnections;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -19,7 +20,10 @@ use Illuminate\Support\Facades\Gate;
  */
 class MemberController extends Controller
 {
-    public function __construct(private readonly BoardActivity $activity) {}
+    public function __construct(
+        private readonly BoardActivity $activity,
+        private readonly LiveConnections $connections,
+    ) {}
 
     public function index(Board $board): JsonResponse
     {
@@ -64,6 +68,14 @@ class MemberController extends Controller
         // subscribed and is the one that has to react.
         broadcast(new MemberRemoved($board->id, $user->id));
         $leaving = $request->user()->is($user);
+
+        // Their subscription was authorised while they were a member. Close
+        // their sockets so a client that ignores the event above can't stay
+        // subscribed; subscribing again is refused. Nothing to protect on a
+        // public board, or when someone leaves by choice.
+        if (! $leaving && ! $board->public) {
+            $this->connections->disconnect($user);
+        }
         $this->activity->record($board->id, $request->user(), 'member.removed', $leaving ? 'left the board' : "removed {$user->name} from the board");
 
         return response()->noContent();

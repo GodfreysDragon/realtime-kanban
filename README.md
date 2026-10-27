@@ -81,6 +81,7 @@ Set `REVERB_ALLOWED_ORIGINS` to the comma-separated hosts allowed to open WebSoc
 | Who's online (avatar stack) | Presence channel membership (`here` / `joining` / `leaving`) |
 | Live cursors | Client **whispers** (`client-cursor`), throttled to about 20/s, never touch PHP |
 | "Ada is editing" and "Ada is moving" badges | Whispers (`client-editing`, `client-dragging`) |
+| Who sent a whisper | The `user_id` Reverb adds to each one from the sender's channel auth, never the payload |
 | Activity feed | `activity.recorded` event, sent to everyone including the actor |
 | Connection status and resync | pusher-js `state_change` drives the badge. Every (re)subscription to the channel fetches the board snapshot again |
 | Lost messages | Every event carries a per-board sequence number; a gap that doesn't fill within 3 s triggers a resync |
@@ -155,13 +156,19 @@ outsider gets a 403 rather than validation errors.
 People join through the board's **invite link** (`#/invite/{token}`). A link opened while signed out survives the
 sign-in, because joining reloads the page with the hash intact. The owner can reset the link, which makes the old one
 stop working, and remove members. A member can leave. Removal is broadcast as `member.removed` to everyone, the removed
-person included: Reverb can't unsubscribe a socket from the server, so the removed tab leaves on its own and the API
-refuses its requests from then on.
+person included, and their tab leaves the board. The API refuses their requests from then on.
+
+Channel authorisation only runs when a socket subscribes, so a modified client could ignore that event and stay
+subscribed. On a private board the server also closes the removed person's sockets (`app/Services/LiveConnections.php`,
+through Pusher's `terminate_connections`, which Reverb implements). Their client reconnects and subscribes again, and
+that subscription is checked against the new membership and refused. Their other tabs and boards reconnect too and
+re-sync from a snapshot.
 
 ### Synchronous broadcasts
 Events implement `ShouldBroadcastNow`. Queued broadcasts with several workers can arrive out of order ("moved" before
 "created"), and the cost of handing a message to a local Reverb server inside the request is a few milliseconds. A
-high-traffic deployment would use a single ordered queue or a per-board sequence number instead.
+high-traffic deployment would use a single ordered queue, with the per-board sequence numbers catching anything that
+still arrived out of order.
 
 ### Drag and drop on Pointer Events
 The native HTML5 drag API never fires for touch, so cards and columns are dragged with Pointer Events instead
@@ -189,13 +196,14 @@ The native HTML5 drag API never fires for touch, so cards and columns are dragge
 ## Tests
 
 ```sh
-php artisan test          # 54 PHPUnit feature tests
+php artisan test          # 59 PHPUnit feature tests
 npm run test:e2e          # two headless browsers against a running app + Reverb (see below)
 ```
 
 - **PHPUnit** covers:
   - auth;
-  - membership: every endpoint and the channel refuse outsiders, invite links, resetting a link, removing and leaving;
+  - membership: every endpoint and the channel refuse outsiders, invite links, resetting a link, removing and leaving,
+    and closing a removed member's sockets;
   - board, column and card CRUD;
   - broadcast dispatch, payloads and `toOthers` socket exclusion;
   - version conflicts;
@@ -224,7 +232,9 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - reordering columns by dragging a header, and with Alt+Arrow on a column name;
   - touch, through Chrome's DevTools protocol: a long press then drag moves a card, a quick swipe scrolls instead;
   - delete propagation, including closing the dialog of someone who had the card open;
-  - removing a member, whose tab is sent back to the board list.
+  - whispers: a client that claims to be someone else still shows up under its own name;
+  - removing a member, whose tab is sent back to the board list, and whose socket stops receiving the board even when
+    a modified client refuses to leave.
 
   Set `E2E_URL` if the app isn't on `http://127.0.0.1:8000`, and `E2E_BROWSER_PATH` to use a Chromium binary other
   than an installed Edge or Chrome. Screenshots land in `storage/e2e/`.
