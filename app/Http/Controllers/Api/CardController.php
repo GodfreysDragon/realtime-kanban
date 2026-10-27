@@ -46,10 +46,10 @@ class CardController extends Controller
             ]);
         })->refresh();
 
-        broadcast(new CardCreated($card))->toOthers();
+        broadcast($event = new CardCreated($card))->toOthers();
         $this->activity->record($card->board_id, $request->user(), 'card.created', "added “{$this->short($card->title)}” to {$column->name}");
 
-        return CardResource::make($card)->response()->setStatusCode(201);
+        return CardResource::make($card)->additional(['seq' => $event->seq])->response()->setStatusCode(201);
     }
 
     /**
@@ -82,10 +82,10 @@ class CardController extends Controller
             ], Response::HTTP_CONFLICT);
         }
 
-        broadcast(new CardUpdated($card))->toOthers();
+        broadcast($event = new CardUpdated($card))->toOthers();
         $this->activity->record($card->board_id, $request->user(), 'card.updated', "edited “{$this->short($card->title)}”");
 
-        return CardResource::make($card)->response();
+        return CardResource::make($card)->additional(['seq' => $event->seq])->response();
     }
 
     /**
@@ -119,14 +119,14 @@ class CardController extends Controller
             broadcast(new ColumnRebalanced($card->board_id, $toColumnId, $rebalanced));
         }
 
-        broadcast(new CardMoved($card))->toOthers();
+        broadcast($event = new CardMoved($card))->toOthers();
 
         if ($fromColumn->id !== $toColumnId) {
             $toColumn = Column::find($toColumnId);
             $this->activity->record($card->board_id, $request->user(), 'card.moved', "moved “{$this->short($card->title)}” from {$fromColumn->name} to {$toColumn->name}");
         }
 
-        return CardResource::make($card)->response();
+        return CardResource::make($card)->additional(['seq' => $event->seq])->response();
     }
 
     public function destroy(Card $card): Response

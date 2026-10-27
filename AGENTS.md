@@ -16,9 +16,9 @@ npm run test:e2e                 # two-browser test; needs `php artisan serve` a
 
 ## Invariants to keep
 
-- **Every broadcast carries the full current row.** Clients apply events idempotently and drop card events whose
-  `version` is older than their copy, so broadcast the row as it is after the write (refresh the model inside the
-  transaction), never a model loaded before it.
+- **Every broadcast carries the full current row.** Clients drop events older than the newest one they applied to the
+  same card or column (by `seq`), so broadcast the row as it is after the write (refresh the model inside the
+  transaction), never a model loaded before it. Card and column writes return their own event's `seq` with the row.
 - **Broadcasts use `ShouldBroadcastNow` and `->toOthers()`.** The acting tab applies its own change optimistically and
   sends `X-Socket-ID`. Activity, rebalance and member-removed events are the exceptions: they go to everyone.
 - **Card content edits are conditional on `version`** (`UPDATE … WHERE version = ?`, 409 on mismatch). Moves are

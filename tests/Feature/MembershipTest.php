@@ -159,6 +159,39 @@ class MembershipTest extends TestCase
         $this->actingAs($this->member)->getJson("/api/boards/{$this->board->id}")->assertForbidden();
     }
 
+    public function test_a_removed_member_cannot_rejoin_with_the_link_they_already_had(): void
+    {
+        $oldToken = $this->actingAs($this->member)->getJson("/api/boards/{$this->board->id}")->json('data.invite_token');
+
+        $this->actingAs($this->owner)->deleteJson("/api/boards/{$this->board->id}/members/{$this->member->id}")->assertNoContent();
+
+        $this->actingAs($this->member)->postJson("/api/invites/{$oldToken}")->assertNotFound();
+        $this->getJson("/api/boards/{$this->board->id}")->assertForbidden();
+
+        // Everyone else gets the new link, from the snapshot or the Share dialog.
+        $newToken = $this->actingAs($this->owner)->getJson("/api/boards/{$this->board->id}/members")->assertOk()->json('invite_token');
+        $this->assertNotSame($oldToken, $newToken);
+        $this->assertSame($newToken, $this->board->fresh()->invite_token);
+        $this->actingAs($this->outsider)->postJson("/api/invites/{$newToken}")->assertOk();
+    }
+
+    public function test_leaving_keeps_the_invite_link(): void
+    {
+        $token = $this->board->invite_token;
+
+        $this->actingAs($this->member)->deleteJson("/api/boards/{$this->board->id}/members/{$this->member->id}")->assertNoContent();
+
+        $this->assertSame($token, $this->board->fresh()->invite_token);
+    }
+
+    public function test_only_members_get_the_invite_link_with_the_members_list(): void
+    {
+        $this->board->update(['public' => true]);
+
+        $this->actingAs($this->member)->getJson("/api/boards/{$this->board->id}/members")->assertJsonPath('invite_token', $this->board->invite_token);
+        $this->actingAs($this->outsider)->getJson("/api/boards/{$this->board->id}/members")->assertOk()->assertJsonPath('invite_token', null);
+    }
+
     public function test_removing_a_member_closes_their_sockets(): void
     {
         $this->mock(LiveConnections::class)

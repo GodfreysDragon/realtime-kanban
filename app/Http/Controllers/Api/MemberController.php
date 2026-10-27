@@ -11,6 +11,7 @@ use App\Services\LiveConnections;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -25,14 +26,18 @@ class MemberController extends Controller
         private readonly LiveConnections $connections,
     ) {}
 
-    public function index(Board $board): JsonResponse
+    public function index(Request $request, Board $board): JsonResponse
     {
         Gate::authorize('view', $board);
 
         $members = $board->members()->orderByPivot('created_at')->get()
             ->map(fn (User $user) => [...$user->toPresence(), 'role' => $user->pivot->role]);
 
-        return response()->json(['data' => $members]);
+        // The current link, for members: it changes when someone is removed,
+        // and the Share dialog shouldn't offer one that no longer works.
+        $isMember = $members->contains('id', $request->user()->id);
+
+        return response()->json(['data' => $members, 'invite_token' => $isMember ? $board->invite_token : null]);
     }
 
     /** Accept an invite link. Joining a board you're already on is a no-op. */
@@ -62,12 +67,23 @@ class MemberController extends Controller
     {
         Gate::authorize('removeMember', [$board, $user]);
 
-        $board->members()->detach($user->id);
+        $leaving = $request->user()->is($user);
+
+        DB::transaction(function () use ($board, $user, $leaving) {
+            $board->members()->detach($user->id);
+
+            // Every member's snapshot included the invite link, so the
+            // removed person still has it. Replace it, or they could simply
+            // join again. (Leaving by choice keeps the link: they could have
+            // been invited back anyway.)
+            if (! $leaving) {
+                $board->forceFill(['invite_token' => Board::newInviteToken()])->save();
+            }
+        });
 
         // Sent to everyone, the removed member included: their tab is still
         // subscribed and is the one that has to react.
         broadcast(new MemberRemoved($board->id, $user->id));
-        $leaving = $request->user()->is($user);
 
         // Their subscription was authorised while they were a member. Close
         // their sockets so a client that ignores the event above can't stay

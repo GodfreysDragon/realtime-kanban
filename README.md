@@ -90,7 +90,7 @@ Set `REVERB_ALLOWED_ORIGINS` to the comma-separated hosts allowed to open WebSoc
 
 ### Sync model
 The REST snapshot (`GET /api/boards/{id}`) is the source of truth. Every server event carries the **full row** rather
-than a diff, so applying an event is idempotent and replays are harmless. The snapshot is fetched once straight away for a fast
+than a diff, so applying an event twice is harmless; ordering is handled by sequence numbers (below). The snapshot is fetched once straight away for a fast
 first paint and again when the channel subscription succeeds, because only a snapshot taken after that moment is
 guaranteed not to miss an event. While a snapshot is loading, incoming events are buffered and replayed after it, and if
 loads overlap only the newest is applied. Pusher-protocol servers don't replay missed messages, but every reconnect
@@ -106,6 +106,12 @@ The client tracks the highest number up to which it has seen everything. A numbe
 means a lost message, and the snapshot is fetched again. The grace period absorbs events from concurrent requests
 arriving slightly out of order. Events sent `->toOthers()` never reach the tab that caused them, so every response
 lists the numbers it broadcast in an `X-Board-Events` header (`board:seq,…`), and that tab counts them as seen.
+
+Arriving out of order is also why every card and column remembers the number of the newest event applied to it, and
+an older one is ignored. Without that, two people moving the same card could leave a third person's screen on the
+older move: moves are last-writer-wins and don't bump the card's `version`, so the version check alone can't tell. A
+write's HTTP response carries the number of its own event (`seq`), so a slow response is checked the same way.
+Deleted cards and columns are remembered too, so a late event or response about one can't bring it back.
 
 ### No echo of your own changes
 The client applies its own changes optimistically. Every API call sends `X-Socket-ID`, and the server broadcasts with
@@ -156,7 +162,9 @@ outsider gets a 403 rather than validation errors.
 People join through the board's **invite link** (`#/invite/{token}`). A link opened while signed out survives the
 sign-in, because joining reloads the page with the hash intact. The owner can reset the link, which makes the old one
 stop working, and remove members. A member can leave. Removal is broadcast as `member.removed` to everyone, the removed
-person included, and their tab leaves the board. The API refuses their requests from then on.
+person included, and their tab leaves the board. The API refuses their requests from then on. Removing someone also
+replaces the invite link: every member's snapshot included it, so the old one would let them straight back in. The
+Share dialog always fetches the current link.
 
 Channel authorisation only runs when a socket subscribes, so a modified client could ignore that event and stay
 subscribed. On a private board the server also closes the removed person's sockets (`app/Services/LiveConnections.php`,
@@ -190,24 +198,26 @@ The native HTML5 drag API never fires for touch, so cards and columns are dragge
 - The card dialog keeps Tab inside it and returns focus to the card when it closes.
 - Escape, Cancel or a click outside ask before throwing away unsaved edits.
 - Board and column names are renamed through real buttons.
-- Errors after the first load, such as a failed resync or a refused channel connection, appear in a banner with
-  Retry rather than leaving a stale board on screen without saying so.
+- Errors after the first load appear in a banner rather than leaving a stale board on screen without saying so: a
+  failed resync offers Retry, and a refused channel connection offers Reload (it needs a fresh subscription). The
+  banner clears once the channel is back.
 
 ## Tests
 
 ```sh
-php artisan test          # 59 PHPUnit feature tests
+php artisan test          # 63 PHPUnit feature tests
 npm run test:e2e          # two headless browsers against a running app + Reverb (see below)
 ```
 
 - **PHPUnit** covers:
   - auth;
   - membership: every endpoint and the channel refuse outsiders, invite links, resetting a link, removing and leaving,
-    and closing a removed member's sockets;
+    a removed member's old link no longer working, and closing a removed member's sockets;
   - board, column and card CRUD;
   - broadcast dispatch, payloads and `toOthers` socket exclusion;
   - version conflicts;
-  - sequence numbers: one per broadcast, per board, reported in the snapshot and the `X-Board-Events` header;
+  - sequence numbers: one per broadcast, per board, reported in the snapshot, the `X-Board-Events` header and each
+    write's response;
   - races where another request commits mid-move, reproduced deterministically by hooking Eloquent's `retrieved`
     event;
   - fractional positioning of cards, including a 60-drop stress test that forces a rebalance, and of columns;
@@ -226,6 +236,9 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - disconnect → missed event → reconnect → resync;
   - sequence numbers: ordinary traffic causes no resync, and a message dropped on an open socket is noticed and
     resynced;
+  - ordering: an older move delivered after a newer one is ignored, and a card deleted while its move is in flight
+    stays deleted;
+  - a card deleted by someone else mid-drag is dropped cleanly;
   - keyboard: Enter opens a card, focus stays in the dialog, Escape returns focus to the card;
   - keyboard moves: Alt+Arrow moves a card to another column, keeps focus on it and announces it;
   - reordering within a column by mouse;
@@ -233,8 +246,9 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - touch, through Chrome's DevTools protocol: a long press then drag moves a card, a quick swipe scrolls instead;
   - delete propagation, including closing the dialog of someone who had the card open;
   - whispers: a client that claims to be someone else still shows up under its own name;
-  - removing a member, whose tab is sent back to the board list, and whose socket stops receiving the board even when
-    a modified client refuses to leave.
+  - removing a member, whose tab is sent back to the board list, whose socket stops receiving the board even when
+    a modified client refuses to leave, and whose old invite link is refused;
+  - leaving a board, which isn't reported as being removed.
 
   Set `E2E_URL` if the app isn't on `http://127.0.0.1:8000`, and `E2E_BROWSER_PATH` to use a Chromium binary other
   than an installed Edge or Chrome. Screenshots land in `storage/e2e/`.

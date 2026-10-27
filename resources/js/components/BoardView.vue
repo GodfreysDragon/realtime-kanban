@@ -153,6 +153,10 @@ async function moveCardByKey(card, direction) {
 
 onBeforeUnmount(() => board.dispose());
 
+function reload() {
+    window.location.reload();
+}
+
 const problem = computed(() => board.error.value ?? board.channelError.value);
 
 // The open card vanished: someone else deleted it, or its column. (Deleting
@@ -285,6 +289,8 @@ function hidePointer() {
             >
                 {{ problem }} The board may be out of date.
                 <button v-if="board.error.value" type="button" class="font-medium underline" @click="board.load()">Retry</button>
+                <!-- A refused live channel needs a fresh socket and subscription, which a reload gives. -->
+                <button v-else type="button" class="font-medium underline" @click="reload">Reload</button>
             </div>
 
             <div class="flex min-h-0 flex-1">
