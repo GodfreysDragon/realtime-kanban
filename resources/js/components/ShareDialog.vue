@@ -23,8 +23,10 @@ const inviteUrl = computed(() => info.value.inviteToken && `${window.location.or
 useDialog(dialog, () => emit('close'));
 
 async function loadMembers() {
-    const { data } = await api('GET', `/api/boards/${info.value.id}/members`);
+    const { data, invite_token } = await api('GET', `/api/boards/${info.value.id}/members`);
     members.value = data;
+    // The link changes when someone is removed; show the one that works now.
+    info.value.inviteToken = invite_token;
 }
 
 async function copyLink() {
@@ -56,7 +58,8 @@ async function remove(member) {
     if (!window.confirm(leaving ? 'Leave this board?' : `Remove ${member.name} from this board?`)) return;
     busy.value = true;
     try {
-        await api('DELETE', `/api/boards/${info.value.id}/members/${member.id}`);
+        if (leaving) await board.leave();
+        else await api('DELETE', `/api/boards/${info.value.id}/members/${member.id}`);
         if (leaving && !info.value.public) {
             window.location.hash = '#/';
             return;

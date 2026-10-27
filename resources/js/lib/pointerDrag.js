@@ -209,8 +209,13 @@ function finish(drop) {
     window.addEventListener('click', swallowClick, { capture: true, once: true });
     setTimeout(() => window.removeEventListener('click', swallowClick, { capture: true }), 0);
 
-    if (drop) state.handlers.onDrop();
-    state.handlers.onEnd();
+    try {
+        if (drop) state.handlers.onDrop();
+    } finally {
+        // Always clean up (drop indicator, "is moving" badge), even if the
+        // drop failed.
+        state.handlers.onEnd();
+    }
 }
 
 function swallowClick(event) {

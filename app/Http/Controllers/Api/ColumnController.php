@@ -41,10 +41,10 @@ class ColumnController extends Controller
             ]);
         });
 
-        broadcast(new ColumnCreated($column))->toOthers();
+        broadcast($event = new ColumnCreated($column))->toOthers();
         $this->activity->record($board->id, $request->user(), 'column.created', "added column “{$column->name}”");
 
-        return ColumnResource::make($column)->response()->setStatusCode(201);
+        return ColumnResource::make($column)->additional(['seq' => $event->seq])->response()->setStatusCode(201);
     }
 
     /**
@@ -71,9 +71,9 @@ class ColumnController extends Controller
             broadcast(new ColumnsRebalanced($column->board_id, $rebalanced));
         }
 
-        broadcast(new ColumnMoved($column))->toOthers();
+        broadcast($event = new ColumnMoved($column))->toOthers();
 
-        return ColumnResource::make($column);
+        return ColumnResource::make($column)->additional(['seq' => $event->seq]);
     }
 
     public function update(Request $request, Column $column): ColumnResource
@@ -84,10 +84,10 @@ class ColumnController extends Controller
 
         $column->update($validated);
 
-        broadcast(new ColumnUpdated($column))->toOthers();
+        broadcast($event = new ColumnUpdated($column))->toOthers();
         $this->activity->record($column->board_id, $request->user(), 'column.renamed', "renamed column “{$previousName}” to “{$column->name}”");
 
-        return ColumnResource::make($column);
+        return ColumnResource::make($column)->additional(['seq' => $event->seq]);
     }
 
     public function destroy(Request $request, Column $column): Response

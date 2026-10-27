@@ -238,6 +238,74 @@ await step('sequence numbers: a message lost without a disconnect is noticed and
     if (snapshots.B === before) throw new Error('the card arrived without a resync, so the message was not dropped');
 });
 
+await step('ordering: an older move delivered late does not undo a newer one', async () => {
+    // Hold back the next card.moved on Bob's socket until the one after it
+    // has been delivered, as two concurrent requests can.
+    await b.evaluate(() => {
+        const id = window.location.hash.match(/boards\/(\d+)/)[1];
+        const channel = window.Pusher.instances[0].channel(`presence-board.${id}`);
+        const handle = channel.handleEvent.bind(channel);
+        let held = null;
+        let done = false;
+        channel.handleEvent = (event) => {
+            if (!done && !held && event.event === 'card.moved') return (held = event);
+            handle(event);
+            if (!done && held && event.event === 'card.moved') {
+                done = true;
+                handle(held);
+            }
+        };
+    });
+    const before = snapshots.B;
+    await card(a, 'Numbered by Ada').focus();
+    await a.keyboard.press('Alt+ArrowLeft'); // Done → In progress (held back on Bob's side)
+    await a.keyboard.press('Alt+ArrowLeft'); // In progress → To do (delivered first)
+    await column(a, 'To do').locator('[data-card-id]', { hasText: 'Numbered by Ada' }).waitFor({ timeout: 5000 });
+    await b.waitForTimeout(1500);
+    if (!(await column(b, 'To do').locator('[data-card-id]', { hasText: 'Numbered by Ada' }).count())) {
+        throw new Error('Bob applied the older move last and shows the card in the wrong column');
+    }
+    if (snapshots.B !== before) throw new Error('Bob resynced, so the late event was never tested');
+});
+
+await step('ordering: a card deleted while its move is in flight does not come back', async () => {
+    // Delay the move's response on Ada's side; the server has already moved
+    // the card by the time Ada deletes it.
+    await a.route('**/api/cards/*/move', async (route) => {
+        const response = await route.fetch();
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await route.fulfill({ response });
+    });
+    await card(a, 'Numbered by Bob').focus();
+    await a.keyboard.press('Alt+ArrowLeft');
+    await card(a, 'Numbered by Bob').click();
+    await a.click('[role=dialog] >> text=Delete');
+    await a.waitForTimeout(2500); // the delayed move response has arrived by now
+    await a.unroute('**/api/cards/*/move');
+    if (await card(a, 'Numbered by Bob').count()) throw new Error('the deleted card came back when its move returned');
+    await card(b, 'Numbered by Bob').waitFor({ state: 'detached', timeout: 5000 });
+});
+
+await step('drag: a card someone deletes mid-drag is dropped cleanly', async () => {
+    await addCard(b, 'Done', 'Deleted mid-drag');
+    await card(a, 'Deleted mid-drag').waitFor({ timeout: 5000 });
+    const box = await card(a, 'Deleted mid-drag').boundingBox();
+    await a.mouse.move(box.x + 20, box.y + 10);
+    await a.mouse.down();
+    await a.mouse.move(box.x + 120, box.y + 60, { steps: 5 });
+
+    await card(b, 'Deleted mid-drag').click();
+    await b.click('[role=dialog] >> text=Delete');
+    await card(a, 'Deleted mid-drag').waitFor({ state: 'detached', timeout: 5000 });
+
+    const target = await column(a, 'To do').locator('ol').boundingBox();
+    await a.mouse.move(target.x + 20, target.y + 10, { steps: 5 });
+    await a.mouse.up();
+    await a.waitForTimeout(300);
+    if (await a.locator('.bg-indigo-500').count()) throw new Error('the drop indicator was left on screen');
+    if (await a.evaluate(() => document.documentElement.classList.contains('is-dragging'))) throw new Error('the drag never ended');
+});
+
 await step('delete propagates and closes the dialog Bob has open', async () => {
     await card(b, 'Made while Bob was offline').click();
     await b.waitForSelector('[role=dialog]');
@@ -301,10 +369,23 @@ await step('membership: the removed member\'s socket stops receiving the board',
     if (leaked.length) throw new Error(`Bob's socket still got ${leaked.join(', ')}`);
 });
 
+await step('membership: the removed member cannot rejoin with the invite link he had', async () => {
+    await b.goto(inviteUrl);
+    await b.locator('text=This invite link is no longer valid.').waitFor({ timeout: 5000 });
+
+    // The link was replaced; Ada's Share dialog shows the new one.
+    await a.click('button:has-text("Share")');
+    const fresh = await a.inputValue('#invite-link');
+    await a.keyboard.press('Escape');
+    if (fresh === inviteUrl) throw new Error('the invite link was not replaced');
+    inviteUrl = fresh;
+});
+
 await step('touch: a long press drags a card to another column, a quick swipe scrolls instead', async () => {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 780 }, hasTouch: true, isMobile: true });
     const phone = await ctx.newPage();
     phone.on('pageerror', (e) => results.push(`PAGE ERROR phone: ${e.message}`));
+    phone.on('dialog', (d) => d.accept());
     await join(phone, 'Tess');
     await phone.goto(inviteUrl);
     await phone.waitForSelector('[data-testid=connection-status]:has-text("Live")');
@@ -336,6 +417,13 @@ await step('touch: a long press drags a card to another column, a quick swipe sc
     if ((await scroller.evaluate((el) => el.scrollLeft)) <= scrolledBefore) throw new Error('the swipe did not scroll the board');
     if (!(await column(phone, 'To do').locator('[data-card-id]', { hasText: 'Swiped across' }).count())) throw new Error('the swipe moved the card');
     await phone.screenshot({ path: `${OUT}/touch.png` });
+
+    // Leaving on purpose isn't reported as being removed.
+    await phone.click('button:has-text("Share")');
+    await phone.locator('[data-testid=members] li', { hasText: 'Tess' }).locator('text=Leave').click();
+    await phone.waitForSelector('text=Boards');
+    await phone.waitForTimeout(500);
+    if (await phone.locator('text=You were removed from this board.').count()) throw new Error('leaving was reported as a removal');
     await ctx.close();
 });
 

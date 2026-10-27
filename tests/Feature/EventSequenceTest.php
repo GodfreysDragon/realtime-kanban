@@ -101,4 +101,19 @@ class EventSequenceTest extends TestCase
 
         $this->assertSame(0, $this->board->fresh()->event_seq);
     }
+
+    public function test_a_write_returns_the_sequence_number_of_its_own_event(): void
+    {
+        // Clients compare it with the numbers on events about the same card or
+        // column, so a slow response can't overwrite a newer change.
+        $card = $this->postJson("/api/columns/{$this->column->id}/cards", ['title' => 'One'])
+            ->assertCreated()->assertJsonPath('seq', 1)->json('data');
+
+        $this->putJson("/api/cards/{$card['id']}", ['title' => 'Two', 'version' => 1])->assertJsonPath('seq', 3);
+        $this->patchJson("/api/cards/{$card['id']}/move", ['column_id' => $this->column->id, 'after_id' => null])->assertJsonPath('seq', 5);
+
+        $column = $this->postJson("/api/boards/{$this->board->id}/columns", ['name' => 'Later'])->assertJsonPath('seq', 6)->json('data');
+        $this->putJson("/api/columns/{$column['id']}", ['name' => 'Soon'])->assertJsonPath('seq', 8);
+        $this->patchJson("/api/columns/{$column['id']}/move", ['after_id' => null])->assertJsonPath('seq', 10);
+    }
 }

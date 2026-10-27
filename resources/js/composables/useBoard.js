@@ -55,6 +55,9 @@ export function useBoard(boardId, me) {
     const error = ref(null);
     const channelError = ref(null);
     const removed = ref(false);
+    // Set while we leave the board ourselves, so our own member.removed
+    // isn't reported as being removed by someone else.
+    let leavingOnPurpose = false;
 
     let pending = [];
     let snapshotSeq = 0; // events up to here are already in the snapshot
@@ -83,16 +86,45 @@ export function useBoard(boardId, me) {
 
     // --- applying server state -------------------------------------------
 
-    function upsertCard(card) {
+    // The newest sequence number applied to each card and column ("card:12").
+    // Events from concurrent requests can arrive in either order, and a move
+    // doesn't bump a card's version, so this is what stops a late, older event
+    // (or a slow HTTP response) from undoing a newer change.
+    let appliedSeqs = {};
+    // Cards and columns deleted here or by someone else. Ids are never reused,
+    // so anything that arrives about one of them later is stale.
+    const deleted = new Set();
+
+    /** Should data about `key` stamped with `seq` be applied? Records it if so. */
+    function isNewest(key, seq) {
+        if (deleted.has(key)) return false;
+        if (seq == null) return true; // unsequenced (a 409's current card): the version check decides
+        if (seq <= Math.max(appliedSeqs[key] ?? 0, snapshotSeq)) return false;
+        appliedSeqs[key] = seq;
+        return true;
+    }
+
+    function upsertCard(card, seq) {
+        if (!isNewest(`card:${card.id}`, seq)) return;
         const existing = cards[card.id];
         if (existing && card.version < existing.version) return;
         cards[card.id] = { ...existing, ...card };
     }
 
+    function putColumn(column, seq) {
+        if (isNewest(`column:${column.id}`, seq)) columns[column.id] = column;
+    }
+
+    function removeCard(id) {
+        deleted.add(`card:${id}`);
+        delete cards[id];
+    }
+
     function removeColumn(id) {
+        deleted.add(`column:${id}`);
         delete columns[id];
         for (const card of Object.values(cards)) {
-            if (card.column_id === id) delete cards[card.id];
+            if (card.column_id === id) removeCard(card.id);
         }
     }
 
@@ -111,6 +143,11 @@ export function useBoard(boardId, me) {
             const { data } = await api('GET', `/api/boards/${boardId}`);
             if (seq !== loadSeq) return;
             snapshotTaken(data.seq);
+            // The snapshot is newer than anything applied so far, and is the
+            // word on what exists (a failed delete puts the row back).
+            appliedSeqs = {};
+            for (const row of data.cards) deleted.delete(`card:${row.id}`);
+            for (const row of data.columns) deleted.delete(`column:${row.id}`);
             board.value = { id: data.id, name: data.name, public: data.public, role: data.role, inviteToken: data.invite_token ?? null };
             replace(columns, data.columns);
             replace(cards, data.cards);
@@ -193,6 +230,7 @@ export function useBoard(boardId, me) {
         .join(channelName)
         // Fires on the first subscription and again after every reconnect.
         .here((users) => {
+            channelError.value = null;
             members.value = users;
             forgetSignalsFromAbsentMembers(users);
             load();
@@ -214,27 +252,27 @@ export function useBoard(boardId, me) {
             if (e?.status === 403 && board.value) removed.value = true;
             else channelError.value = e?.status === 403 ? 'You are not allowed to join this board.' : 'Could not join the live channel.';
         })
-        .listen('.card.created', buffered(({ card }) => upsertCard(card)))
-        .listen('.card.updated', buffered(({ card }) => upsertCard(card)))
-        .listen('.card.moved', buffered(({ card }) => upsertCard(card)))
-        .listen('.card.deleted', buffered(({ id }) => delete cards[id]))
-        .listen('.column.created', buffered(({ column }) => (columns[column.id] = column)))
-        .listen('.column.updated', buffered(({ column }) => (columns[column.id] = column)))
+        .listen('.card.created', buffered(({ card, seq }) => upsertCard(card, seq)))
+        .listen('.card.updated', buffered(({ card, seq }) => upsertCard(card, seq)))
+        .listen('.card.moved', buffered(({ card, seq }) => upsertCard(card, seq)))
+        .listen('.card.deleted', buffered(({ id }) => removeCard(id)))
+        .listen('.column.created', buffered(({ column, seq }) => putColumn(column, seq)))
+        .listen('.column.updated', buffered(({ column, seq }) => putColumn(column, seq)))
         .listen('.column.deleted', buffered(({ id }) => removeColumn(id)))
         .listen(
             '.column.rebalanced',
-            buffered(({ positions }) => {
+            buffered(({ positions, seq }) => {
                 for (const [id, position] of Object.entries(positions)) {
-                    if (cards[id]) cards[id].position = position;
+                    if (cards[id] && isNewest(`card:${id}`, seq)) cards[id].position = position;
                 }
             }),
         )
-        .listen('.column.moved', buffered(({ column }) => (columns[column.id] = column)))
+        .listen('.column.moved', buffered(({ column, seq }) => putColumn(column, seq)))
         .listen(
             '.columns.rebalanced',
-            buffered(({ positions }) => {
+            buffered(({ positions, seq }) => {
                 for (const [id, position] of Object.entries(positions)) {
-                    if (columns[id]) columns[id].position = position;
+                    if (columns[id] && isNewest(`column:${id}`, seq)) columns[id].position = position;
                 }
             }),
         )
@@ -244,7 +282,7 @@ export function useBoard(boardId, me) {
         // board you can still see it, you just stop being a member.
         .listen('.member.removed', ({ user_id, seq }) => {
             noteSeq(seq);
-            if (user_id !== me.id) return;
+            if (user_id !== me.id || leavingOnPurpose) return;
             if (board.value?.public) Object.assign(board.value, { role: null, inviteToken: null });
             else removed.value = true;
         })
@@ -329,21 +367,22 @@ export function useBoard(boardId, me) {
 
     function createCard(columnId, title) {
         return guarded(async () => {
-            const { data } = await api('POST', `/api/columns/${columnId}/cards`, { title });
-            upsertCard(data);
+            const { data, seq } = await api('POST', `/api/columns/${columnId}/cards`, { title });
+            upsertCard(data, seq);
             return data;
         }, 'Could not add the card.');
     }
 
     /** Throws ApiError (status 409) on a version conflict, for the editor to resolve. */
     async function updateCard(cardId, changes, version) {
-        const { data } = await api('PUT', `/api/cards/${cardId}`, { ...changes, version });
-        upsertCard(data);
+        const { data, seq } = await api('PUT', `/api/cards/${cardId}`, { ...changes, version });
+        upsertCard(data, seq);
         return data;
     }
 
     function moveCard(cardId, columnId, afterId) {
         const card = cards[cardId];
+        if (!card || !columns[columnId]) return; // deleted while it was being dragged
         const siblings = (cardsByColumn.value[columnId] ?? []).filter((c) => c.id !== cardId);
         const index = afterId == null ? 0 : siblings.findIndex((c) => c.id === afterId) + 1;
 
@@ -356,7 +395,7 @@ export function useBoard(boardId, me) {
         sendMove(
             `card:${cardId}`,
             () => api('PATCH', `/api/cards/${cardId}/move`, { column_id: columnId, after_id: afterId ?? null }),
-            upsertCard,
+            ({ data, seq }) => upsertCard(data, seq),
             'Could not move the card.',
         );
     }
@@ -366,8 +405,10 @@ export function useBoard(boardId, me) {
      * one when it returns. Only the newest waiting move is kept: each was
      * computed from the board as it looked after the moves before it. A
      * response is applied only if no newer move is waiting to replace it.
+     * Moves of an item deleted meanwhile are dropped.
      */
     function sendMove(key, send, apply, failureMessage) {
+        if (deleted.has(key)) return;
         const queue = (moveQueues[key] ??= { busy: false, next: null });
         if (queue.busy) {
             queue.next = { send, apply, failureMessage };
@@ -376,8 +417,8 @@ export function useBoard(boardId, me) {
 
         queue.busy = true;
         guarded(async () => {
-            const { data } = await send();
-            if (!queue.next) apply(data);
+            const response = await send();
+            if (!queue.next) apply(response);
         }, failureMessage).finally(() => {
             queue.busy = false;
             const next = queue.next;
@@ -393,14 +434,14 @@ export function useBoard(boardId, me) {
     }
 
     function deleteCard(cardId) {
-        delete cards[cardId];
+        removeCard(cardId);
         return guarded(() => api('DELETE', `/api/cards/${cardId}`), 'Could not delete the card.');
     }
 
     function addColumn(name) {
         return guarded(async () => {
-            const { data } = await api('POST', `/api/boards/${boardId}/columns`, { name });
-            columns[data.id] = data;
+            const { data, seq } = await api('POST', `/api/boards/${boardId}/columns`, { name });
+            putColumn(data, seq);
         }, 'Could not add the column.');
     }
 
@@ -413,6 +454,7 @@ export function useBoard(boardId, me) {
         const others = sortedColumns.value.filter((column) => column.id !== columnId);
         const index = afterId == null ? 0 : others.findIndex((column) => column.id === afterId) + 1;
         const column = columns[columnId];
+        if (!column) return; // deleted while it was being dragged
 
         const lower = others[index - 1]?.position ?? -Infinity;
         const upper = others[index]?.position ?? Infinity;
@@ -423,7 +465,7 @@ export function useBoard(boardId, me) {
         sendMove(
             `column:${columnId}`,
             () => api('PATCH', `/api/columns/${columnId}/move`, { after_id: afterId ?? null }),
-            (column) => (columns[columnId] = column),
+            ({ data, seq }) => putColumn(data, seq),
             'Could not move the column.',
         );
     }
@@ -431,6 +473,17 @@ export function useBoard(boardId, me) {
     function deleteColumn(columnId) {
         removeColumn(columnId);
         return guarded(() => api('DELETE', `/api/columns/${columnId}`), 'Could not delete the column.');
+    }
+
+    /** Leave the board; the caller navigates away once it's done. */
+    async function leave() {
+        leavingOnPurpose = true;
+        try {
+            await api('DELETE', `/api/boards/${boardId}/members/${me.id}`);
+        } catch (e) {
+            leavingOnPurpose = false;
+            throw e;
+        }
     }
 
     function renameBoard(name) {
@@ -471,6 +524,7 @@ export function useBoard(boardId, me) {
         error,
         channelError,
         removed,
+        leave,
         load,
         applyCard: upsertCard,
         dispose,
