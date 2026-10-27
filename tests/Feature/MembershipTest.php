@@ -8,6 +8,7 @@ use App\Models\Board;
 use App\Models\Card;
 use App\Models\Column;
 use App\Models\User;
+use App\Services\LiveConnections;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Tests\TestCase;
@@ -158,10 +159,27 @@ class MembershipTest extends TestCase
         $this->actingAs($this->member)->getJson("/api/boards/{$this->board->id}")->assertForbidden();
     }
 
+    public function test_removing_a_member_closes_their_sockets(): void
+    {
+        $this->mock(LiveConnections::class)
+            ->shouldReceive('disconnect')->once()->withArgs(fn (User $user) => $user->is($this->member));
+
+        $this->actingAs($this->owner)->deleteJson("/api/boards/{$this->board->id}/members/{$this->member->id}")->assertNoContent();
+    }
+
+    public function test_on_a_public_board_a_removed_member_keeps_their_sockets(): void
+    {
+        $this->board->update(['public' => true]);
+        $this->mock(LiveConnections::class)->shouldNotReceive('disconnect');
+
+        $this->actingAs($this->owner)->deleteJson("/api/boards/{$this->board->id}/members/{$this->member->id}")->assertNoContent();
+    }
+
     public function test_a_member_can_leave_but_cannot_remove_others(): void
     {
         $carol = User::factory()->create();
         $this->board->addMember($carol);
+        $this->mock(LiveConnections::class)->shouldNotReceive('disconnect');
 
         $this->actingAs($this->member)->deleteJson("/api/boards/{$this->board->id}/members/{$carol->id}")->assertForbidden();
         $this->deleteJson("/api/boards/{$this->board->id}/members/{$this->member->id}")->assertNoContent();

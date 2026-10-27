@@ -35,6 +35,8 @@ const GAP_GRACE_MS = 3_000;
  *    like gaps.
  *  - Ephemeral state (cursors, who is editing or dragging which card) never
  *    touches the server. It travels as client "whispers" between browsers.
+ *    Reverb stamps each whisper with the sender's authenticated user id, and
+ *    that id, never one in the payload, says whose cursor or badge it is.
  */
 export function useBoard(boardId, me) {
     const { push: toast } = useToasts();
@@ -207,7 +209,10 @@ export function useBoard(boardId, me) {
             delete dragging[user.id];
         })
         .error((e) => {
-            channelError.value = e?.status === 403 ? 'You are not allowed to join this board.' : 'Could not join the live channel.';
+            // Refused after we were already in: the server closed our socket
+            // on removal, possibly before the member.removed message arrived.
+            if (e?.status === 403 && board.value) removed.value = true;
+            else channelError.value = e?.status === 403 ? 'You are not allowed to join this board.' : 'Could not join the live channel.';
         })
         .listen('.card.created', buffered(({ card }) => upsertCard(card)))
         .listen('.card.updated', buffered(({ card }) => upsertCard(card)))
@@ -243,12 +248,25 @@ export function useBoard(boardId, me) {
             if (board.value?.public) Object.assign(board.value, { role: null, inviteToken: null });
             else removed.value = true;
         })
-        .listenForWhisper('cursor', ({ userId, x, y }) => {
+        .listenForWhisper('cursor', fromSender((userId, { x, y }) => {
             if (x == null) delete cursors[userId];
             else cursors[userId] = { x, y, at: Date.now() };
-        })
-        .listenForWhisper('editing', ({ userId, cardId }) => setOrClear(editing, userId, cardId))
-        .listenForWhisper('dragging', ({ userId, cardId }) => setOrClear(dragging, userId, cardId));
+        }))
+        .listenForWhisper('editing', fromSender((userId, { cardId }) => setOrClear(editing, userId, cardId)))
+        .listenForWhisper('dragging', fromSender((userId, { cardId }) => setOrClear(dragging, userId, cardId)));
+
+    /**
+     * pusher-js hands whisper listeners the server's metadata as a second
+     * argument. Its user_id comes from the sender's channel authorisation, so
+     * a client can't put words in someone else's mouth. Without it (a server
+     * that doesn't stamp whispers) the whisper is dropped.
+     */
+    function fromSender(handler) {
+        return (data, metadata) => {
+            if (metadata?.user_id == null) return;
+            handler(String(metadata.user_id), data ?? {});
+        };
+    }
 
     /** People who left while we were offline never sent us "leaving"; drop their cursors and badges. */
     function forgetSignalsFromAbsentMembers(users) {
@@ -269,7 +287,7 @@ export function useBoard(boardId, me) {
         // Whispers need a live subscription. The card dialog clears its
         // "editing" flag on unmount, which can run after dispose() has left.
         if (disposed || !channel.subscription?.subscribed) return;
-        channel.whisper(event, { userId: me.id, ...payload });
+        channel.whisper(event, payload);
     }
 
     let everConnected = connection.state === 'connected';
