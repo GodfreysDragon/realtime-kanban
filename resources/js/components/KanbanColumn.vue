@@ -90,6 +90,7 @@ function remove() {
                 ref="nameInput"
                 v-model="nameDraft"
                 maxlength="60"
+                aria-label="Column name"
                 class="min-w-0 flex-1 rounded border border-indigo-400 bg-white px-1.5 py-0.5 text-sm font-semibold outline-none dark:bg-slate-950"
                 @keydown.enter.prevent="finishRename"
                 @keydown.esc="renaming = false"
@@ -107,10 +108,10 @@ function remove() {
                     {{ column.name }}
                 </button>
             </h2>
-            <span class="rounded-full bg-slate-200 px-2 text-xs text-slate-600 tabular-nums dark:bg-slate-800 dark:text-slate-300">{{ cards.length }}</span>
+            <span class="rounded-full bg-slate-200 px-2 text-xs text-slate-600 tabular-nums dark:bg-slate-800 dark:text-slate-300">{{ cards.length }}<span class="sr-only"> {{ cards.length === 1 ? 'card' : 'cards' }}</span></span>
             <button
                 data-no-drag
-                class="rounded p-0.5 text-slate-500 opacity-0 group-hover:opacity-100 hover:bg-slate-200 hover:text-red-600 focus:opacity-100 [@media(hover:none)]:opacity-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                class="grid size-6 place-items-center rounded text-slate-500 opacity-0 group-hover:opacity-100 hover:bg-slate-200 hover:text-red-600 focus:opacity-100 [@media(hover:none)]:opacity-100 dark:text-slate-400 dark:hover:bg-slate-800"
                 :aria-label="`Delete column ${column.name}`"
                 @click="remove"
             >
@@ -138,6 +139,7 @@ function remove() {
                     rows="2"
                     maxlength="255"
                     placeholder="Card title"
+                    :aria-label="`New card in ${column.name}`"
                     class="w-full resize-none rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950"
                     @keydown.enter.exact.prevent="addCard"
                     @keydown.esc="adding = false"

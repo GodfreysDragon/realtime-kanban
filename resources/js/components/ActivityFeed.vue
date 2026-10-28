@@ -24,7 +24,7 @@ function ago(iso) {
     <div class="p-4">
         <div class="flex items-center justify-between">
             <h2 class="text-sm font-semibold">Activity</h2>
-            <button class="rounded px-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 lg:hidden dark:hover:text-white" aria-label="Close activity" @click="emit('close')">✕</button>
+            <button class="grid size-6 place-items-center rounded text-slate-500 dark:text-slate-400 hover:text-slate-900 lg:hidden dark:hover:text-white" aria-label="Close activity" @click="emit('close')">✕</button>
         </div>
 
         <p v-if="!board.activities.value.length" class="mt-4 text-sm text-slate-500">Nothing has happened yet.</p>

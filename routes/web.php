@@ -15,7 +15,7 @@ Route::post('logout', [AuthController::class, 'logout'])->name('logout');
 Route::prefix('api')->name('api.')->group(function () {
     Route::get('me', [AuthController::class, 'me'])->name('me');
 
-    Route::middleware('auth')->group(function () {
+    Route::middleware(['auth', 'throttle:board-api'])->group(function () {
         Route::apiResource('boards', BoardController::class)->only(['index', 'store', 'show', 'update']);
 
         Route::get('boards/{board}/members', [MemberController::class, 'index'])->name('members.index');
