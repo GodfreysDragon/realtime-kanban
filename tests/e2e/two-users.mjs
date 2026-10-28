@@ -306,6 +306,54 @@ await step('drag: a card someone deletes mid-drag is dropped cleanly', async () 
     if (await a.evaluate(() => document.documentElement.classList.contains('is-dragging'))) throw new Error('the drag never ended');
 });
 
+await step('drag: Escape cancels, and releasing over the card afterwards does not open it', async () => {
+    const box = await card(a, 'Goes on top').boundingBox();
+    const [x, y] = [box.x + 30, box.y + box.height / 2];
+    await a.mouse.move(x, y);
+    await a.mouse.down();
+    await a.mouse.move(x + 80, y + 60, { steps: 5 });
+    await a.keyboard.press('Escape');
+    await a.mouse.move(x, y, { steps: 5 });
+    await a.mouse.up();
+    await a.waitForTimeout(300);
+    if (await a.locator('[role=dialog]').count()) throw new Error('the click after a cancelled drag opened the card');
+    if (await a.evaluate(() => document.documentElement.classList.contains('is-dragging'))) throw new Error('the drag never ended');
+});
+
+await step('drag: leaving the board mid-drag cancels it, nothing is sent', async () => {
+    const moves = [];
+    const onRequest = (r) => r.url().includes('/move') && moves.push(r.url());
+    a.on('request', onRequest);
+    const box = await card(a, 'Goes on top').boundingBox();
+    await a.mouse.move(box.x + 30, box.y + 10);
+    await a.mouse.down();
+    await a.mouse.move(box.x + 120, box.y + 80, { steps: 5 });
+    await a.evaluate(() => (window.location.hash = '#/'));
+    await a.waitForSelector('text=Boards');
+    // Still holding the button: the board is gone, so the drag must be too.
+    if (await a.evaluate(() => document.documentElement.classList.contains('is-dragging') || document.querySelectorAll('body > [aria-hidden=true]').length))
+        throw new Error('the dragged card is still following the pointer over the board list');
+    await a.mouse.move(300, 300, { steps: 3 });
+    await a.mouse.up();
+    await a.waitForTimeout(500);
+    a.off('request', onRequest);
+    if (moves.length) throw new Error(`a move was sent after leaving: ${moves.join(', ')}`);
+    await a.goto(boardUrl);
+    await a.waitForSelector('[data-testid=connection-status]:has-text("Live")');
+});
+
+await step('keyboard: focus returns to a card moved from its own dialog', async () => {
+    await card(a, 'Goes on top').focus();
+    await a.keyboard.press('Enter');
+    await a.waitForSelector('[role=dialog]');
+    await a.selectOption('#card-column', { label: 'In progress' });
+    await column(a, 'In progress').locator('[data-card-id]', { hasText: 'Goes on top' }).waitFor({ timeout: 5000 });
+    await a.keyboard.press('Escape');
+    await a.waitForSelector('[role=dialog]', { state: 'detached' });
+    await a.waitForTimeout(100);
+    if (!(await a.evaluate(() => document.activeElement?.closest('[data-card-id]')?.textContent.includes('Goes on top')))) throw new Error('focus was lost');
+});
+
 await step('delete propagates and closes the dialog Bob has open', async () => {
     await card(b, 'Made while Bob was offline').click();
     await b.waitForSelector('[role=dialog]');
@@ -340,6 +388,23 @@ await b.mouse.move(400, 250);
 await a.waitForTimeout(400);
 await a.screenshot({ path: `${OUT}/ada.png` });
 await b.screenshot({ path: `${OUT}/bob.png` });
+
+await step('whispers: Reverb caps a flood from a modified client', async () => {
+    await a.evaluate(() => {
+        window.cursorsSeen = 0;
+        window.Pusher.instances[0].connection.bind('message', (event) => event.event === 'client-cursor' && window.cursorsSeen++);
+    });
+    await b.evaluate(() => {
+        const id = window.location.hash.match(/boards\/(\d+)/)[1];
+        const channel = window.Pusher.instances[0].channel(`presence-board.${id}`);
+        for (let i = 0; i < 400; i++) channel.trigger('client-cursor', { x: i, y: i });
+    });
+    await a.waitForTimeout(2000);
+    const seen = await a.evaluate(() => window.cursorsSeen);
+    if (seen === 0 || seen > 200) throw new Error(`Ada received ${seen} of 400 whispers sent in a burst`);
+    // Bob stays over the limit for the rest of the 5 s window; nothing after
+    // this needs his whispers.
+});
 
 await step('membership: Ada removes Bob, and Bob is sent back to his boards', async () => {
     // Play a modified client that ignores the removal: keep the subscription
@@ -379,6 +444,17 @@ await step('membership: the removed member cannot rejoin with the invite link he
     await a.keyboard.press('Escape');
     if (fresh === inviteUrl) throw new Error('the invite link was not replaced');
     inviteUrl = fresh;
+});
+
+await step('loading: a failed board list offers a retry that works', async () => {
+    const page = await ctxA.newPage();
+    await page.route('**/api/boards', (route) => route.abort());
+    await page.goto(BASE);
+    await page.locator('text=Could not load your boards.').waitFor({ timeout: 5000 });
+    await page.unroute('**/api/boards');
+    await page.click('button:has-text("Try again")');
+    await page.locator('a', { hasText: 'E2E board' }).waitFor({ timeout: 5000 });
+    await page.close();
 });
 
 await step('touch: a long press drags a card to another column, a quick swipe scrolls instead', async () => {

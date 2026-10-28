@@ -53,7 +53,9 @@ function onKeydown(event) {
     >
         <span v-if="label" class="mb-1.5 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium" :class="label.soft">{{ label.name }}</span>
         <p class="break-words">{{ card.title }}</p>
-        <p v-if="card.description" class="mt-1 text-xs text-slate-500 dark:text-slate-400" aria-label="Has description">≡</p>
+        <p v-if="card.description" class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            <span aria-hidden="true">≡</span><span class="sr-only">Has a description</span>
+        </p>
 
         <div
             v-if="busyWith"

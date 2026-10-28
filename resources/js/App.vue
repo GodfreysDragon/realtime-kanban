@@ -9,6 +9,7 @@ import ToastStack from './components/ToastStack.vue';
 
 const me = ref(null);
 const ready = ref(false);
+const startupError = ref('');
 const boardId = ref(parseRoute());
 const inviteError = ref('');
 const joining = ref(false);
@@ -44,19 +45,33 @@ async function acceptInvite() {
 }
 
 async function logout() {
-    await api('POST', '/logout');
+    try {
+        await api('POST', '/logout');
+    } catch {
+        // Usually an expired session (419): signed out already, as far as
+        // the server is concerned. The reload below shows that either way.
+    }
     // The session (and its CSRF token) is gone, and Echo's socket is
     // authenticated as the old user: a full reload resets both cleanly.
     window.location.hash = '';
     window.location.reload();
 }
 
-onMounted(async () => {
+async function start() {
+    startupError.value = '';
+    try {
+        const { user } = await api('GET', '/api/me');
+        me.value = user;
+        ready.value = true;
+        acceptInvite();
+    } catch {
+        startupError.value = 'Could not reach the server.';
+    }
+}
+
+onMounted(() => {
     window.addEventListener('hashchange', onHashChange);
-    const { user } = await api('GET', '/api/me');
-    me.value = user;
-    ready.value = true;
-    acceptInvite();
+    start();
 });
 
 onBeforeUnmount(() => window.removeEventListener('hashchange', onHashChange));
@@ -89,6 +104,10 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', onHashChange));
                 </div>
                 <BoardList v-else />
             </template>
+            <div v-else-if="startupError" class="p-8 text-center text-sm text-slate-500" role="alert">
+                {{ startupError }}
+                <button type="button" class="ml-1 text-indigo-600 hover:underline" @click="start">Try again</button>
+            </div>
         </main>
 
         <ToastStack />

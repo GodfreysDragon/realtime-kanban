@@ -7,10 +7,19 @@ const loading = ref(true);
 const name = ref('');
 const error = ref('');
 
+const loadError = ref('');
+
 async function load() {
-    const { data } = await api('GET', '/api/boards');
-    boards.value = data;
-    loading.value = false;
+    loading.value = true;
+    loadError.value = '';
+    try {
+        const { data } = await api('GET', '/api/boards');
+        boards.value = data;
+    } catch (e) {
+        loadError.value = e.data?.message ?? 'Could not load your boards.';
+    } finally {
+        loading.value = false;
+    }
 }
 
 async function create() {
@@ -37,6 +46,7 @@ onMounted(load);
                 v-model="name"
                 maxlength="80"
                 placeholder="New board name"
+                aria-label="New board name"
                 class="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 dark:border-slate-700 dark:bg-slate-900"
             />
             <button type="submit" :disabled="!name.trim()" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
@@ -46,6 +56,10 @@ onMounted(load);
         <p v-if="error" class="mt-2 text-sm text-red-600">{{ error }}</p>
 
         <p v-if="loading" class="mt-8 text-sm text-slate-500">Loading…</p>
+        <p v-else-if="loadError" class="mt-8 text-sm text-slate-500" role="alert">
+            {{ loadError }}
+            <button type="button" class="ml-1 text-indigo-600 hover:underline" @click="load">Try again</button>
+        </p>
         <p v-else-if="!boards.length" class="mt-8 text-sm text-slate-500">No boards yet. Create one above, or open an invite link someone shared with you.</p>
 
         <ul v-else class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

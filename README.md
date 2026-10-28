@@ -71,7 +71,8 @@ Nothing else needs to change: the WebSocket URL comes from the `REVERB_*` settin
 
 ### Deploying
 Set `REVERB_ALLOWED_ORIGINS` to the comma-separated hosts allowed to open WebSocket connections (for example
-`kanban.example.com`). It defaults to `*`, which is fine locally.
+`kanban.example.com`). It defaults to `*`, which is fine locally. The rate limits below can be tuned with
+`KANBAN_API_REQUESTS_PER_MINUTE` and `REVERB_APP_RATE_LIMIT_MAX_ATTEMPTS` / `REVERB_APP_RATE_LIMIT_DECAY_SECONDS`.
 
 ## What happens in real time
 
@@ -185,7 +186,10 @@ The native HTML5 drag API never fires for touch, so cards and columns are dragge
 - On a touch screen it starts after a 300 ms press without moving. Moving sooner is a scroll, so the board stays
   scrollable by swiping across cards. Once a drag starts, the first `touchmove` is cancelled so the page doesn't scroll
   under the finger.
-- A copy of the card follows the pointer, scroll containers under it scroll near their edges, and Escape cancels.
+- A copy of the card follows the pointer, and scroll containers under it scroll near their edges.
+- Escape cancels, and so does switching windows or leaving the board, so a drag can never drop onto a board that
+  is no longer on screen. The click that follows the button coming up is swallowed even when the drag was cancelled
+  first, so it doesn't open the card.
 - The board decides what's under the pointer (`elementFromPoint`) and where the drop indicator goes.
 - A column's header is its drag handle, apart from the delete button.
 
@@ -195,17 +199,27 @@ The native HTML5 drag API never fires for touch, so cards and columns are dragge
   column. Focus stays on the card, and the new position is announced (“Moved “Press kit” to position 2 of 3 in
   Review”).
 - On a column's name, Alt+←/→ moves the column one place.
-- The card dialog keeps Tab inside it and returns focus to the card when it closes.
+- The card dialog keeps Tab inside it and returns focus to the card when it closes, including when the card was
+  re-rendered meanwhile (moved to another column from the dialog, or by someone else).
+- Every input has a label, card counts and description markers have text for screen readers, and small icon buttons
+  have at least a 24×24 px target.
 - Escape, Cancel or a click outside ask before throwing away unsaved edits.
 - Board and column names are renamed through real buttons.
 - Errors after the first load appear in a banner rather than leaving a stale board on screen without saying so: a
   failed resync offers Retry, and a refused channel connection offers Reload (it needs a fresh subscription). The
-  banner clears once the channel is back.
+  banner clears once the channel is back. The board list, the app's start-up and the Share dialog also offer a retry
+  when their request fails, rather than showing "Loading…" for good.
+
+### Rate limits
+- **HTTP:** each signed-in user may make 300 board-API requests a minute (`throttle:board-api`), counted per user, not
+  per IP. The app stays far below that; it's a ceiling for scripted clients.
+- **WebSocket:** Reverb's per-connection message limit is on, at 150 messages per 5 seconds. Live cursors send about
+  20 a second, and the rest is dropped, so a modified client can't flood everyone on a board with whispers.
 
 ## Tests
 
 ```sh
-php artisan test          # 63 PHPUnit feature tests
+php artisan test          # 64 PHPUnit feature tests
 npm run test:e2e          # two headless browsers against a running app + Reverb (see below)
 ```
 
@@ -222,6 +236,7 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
     event;
   - fractional positioning of cards, including a 60-drop stress test that forces a rebalance, and of columns;
   - cross-board validation;
+  - the per-user API rate limit;
   - real `/broadcasting/auth` presence signing with the Reverb driver.
 - **End-to-end** (`tests/e2e/two-users.mjs`) drives two signed-in users in headless Edge/Chrome through `playwright-core`,
   using the installed browser so nothing is downloaded. It checks:
@@ -248,7 +263,11 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - whispers: a client that claims to be someone else still shows up under its own name;
   - removing a member, whose tab is sent back to the board list, whose socket stops receiving the board even when
     a modified client refuses to leave, and whose old invite link is refused;
-  - leaving a board, which isn't reported as being removed.
+  - leaving a board, which isn't reported as being removed;
+  - drags cancelled with Escape or by leaving the board, which send nothing and open nothing;
+  - focus returning to a card moved from its own dialog;
+  - a failed board list offering a retry that works;
+  - Reverb dropping most of a burst of 400 whispers from one connection.
 
   Set `E2E_URL` if the app isn't on `http://127.0.0.1:8000`, and `E2E_BROWSER_PATH` to use a Chromium binary other
   than an installed Edge or Chrome. Screenshots land in `storage/e2e/`.

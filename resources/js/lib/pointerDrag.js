@@ -9,8 +9,9 @@
  *
  * While dragging, a copy of the element follows the pointer, the scroll
  * containers under it scroll when the pointer nears their edge, and Escape
- * cancels. The caller decides what is under the pointer and what a drop
- * does, through the callbacks given to start().
+ * cancels, as does leaving the window. The caller decides what is under the
+ * pointer and what a drop does, through the callbacks given to start(), and
+ * calls cancelPointerDrag() when the thing being dragged goes away.
  */
 
 const MOVE_THRESHOLD_PX = 4;
@@ -67,6 +68,12 @@ export function startPointerDrag(event, element, handlers) {
     // cancelled so the page doesn't scroll under the finger.
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('contextmenu', onContextMenu);
+    window.addEventListener('blur', onBlur);
+}
+
+/** End the current drag, if any, without dropping. */
+export function cancelPointerDrag() {
+    if (active) finish(false, { pointerStillDown: true });
 }
 
 function begin(state) {
@@ -144,8 +151,13 @@ function onKeydown(event) {
     if (event.key === 'Escape' && active?.dragging) {
         event.preventDefault();
         event.stopPropagation();
-        finish(false);
+        finish(false, { pointerStillDown: true });
     }
+}
+
+function onBlur() {
+    // Switching windows mid-drag: the pointerup may never reach us.
+    if (active) finish(false, { pointerStillDown: true });
 }
 
 function onTouchMove(event) {
@@ -188,7 +200,12 @@ function scrollersAt(x, y) {
     return scrollers;
 }
 
-function finish(drop) {
+/**
+ * @param {boolean} drop
+ * @param {{ pointerStillDown?: boolean }} [options]  cancelled before the button
+ *   came up (Escape, blur, cancelPointerDrag): its click is yet to come
+ */
+function finish(drop, { pointerStillDown = false } = {}) {
     const state = active;
     active = null;
 
@@ -200,14 +217,16 @@ function finish(drop) {
     window.removeEventListener('keydown', onKeydown);
     window.removeEventListener('touchmove', onTouchMove);
     window.removeEventListener('contextmenu', onContextMenu);
+    window.removeEventListener('blur', onBlur);
 
     if (!state.dragging) return;
 
     state.ghost.remove();
     document.documentElement.classList.remove('is-dragging');
-    // The click that follows a mouse drag isn't a click on the element.
-    window.addEventListener('click', swallowClick, { capture: true, once: true });
-    setTimeout(() => window.removeEventListener('click', swallowClick, { capture: true }), 0);
+    // The click that follows a mouse drag isn't a click on the element. If
+    // the drag ended before the button came up, that click is still to come.
+    if (pointerStillDown) window.addEventListener('pointerup', swallowNextClick, { capture: true, once: true });
+    else swallowNextClick();
 
     try {
         if (drop) state.handlers.onDrop();
@@ -216,6 +235,11 @@ function finish(drop) {
         // drop failed.
         state.handlers.onEnd();
     }
+}
+
+function swallowNextClick() {
+    window.addEventListener('click', swallowClick, { capture: true, once: true });
+    setTimeout(() => window.removeEventListener('click', swallowClick, { capture: true }), 0);
 }
 
 function swallowClick(event) {

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, provide, reactive, ref, watch } from 'vue';
 import { useBoard } from '../composables/useBoard';
 import { useToasts } from '../composables/useToasts';
-import { startPointerDrag } from '../lib/pointerDrag';
+import { cancelPointerDrag, startPointerDrag } from '../lib/pointerDrag';
 import KanbanColumn from './KanbanColumn.vue';
 import CardModal from './CardModal.vue';
 import ShareDialog from './ShareDialog.vue';
@@ -151,7 +151,12 @@ async function moveCardByKey(card, direction) {
     announcement.value = `Moved “${card.title}” to position ${placed.findIndex((c) => c.id === card.id) + 1} of ${placed.length} in ${target.name}.`;
 }
 
-onBeforeUnmount(() => board.dispose());
+onBeforeUnmount(() => {
+    // A drag mustn't outlive the board (removed mid-drag, or navigated away):
+    // its drop would go to a board this view no longer shows.
+    cancelPointerDrag();
+    board.dispose();
+});
 
 function reload() {
     window.location.reload();
@@ -246,6 +251,7 @@ function hidePointer() {
                     ref="nameInput"
                     v-model="nameDraft"
                     maxlength="80"
+                    aria-label="Board name"
                     class="rounded-md border border-indigo-400 bg-white px-2 py-0.5 text-lg font-semibold outline-none dark:bg-slate-900"
                     @keydown.enter.prevent="finishRename"
                     @keydown.esc="renaming = false"
@@ -312,6 +318,7 @@ function hidePointer() {
                                 v-model="newColumnName"
                                 maxlength="60"
                                 placeholder="+ Add column"
+                                aria-label="New column name"
                                 class="w-full rounded-md bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-slate-400 focus:bg-white dark:focus:bg-slate-900"
                             />
                         </form>

@@ -22,11 +22,18 @@ const inviteUrl = computed(() => info.value.inviteToken && `${window.location.or
 
 useDialog(dialog, () => emit('close'));
 
+const membersError = ref('');
+
 async function loadMembers() {
-    const { data, invite_token } = await api('GET', `/api/boards/${info.value.id}/members`);
-    members.value = data;
-    // The link changes when someone is removed; show the one that works now.
-    info.value.inviteToken = invite_token;
+    membersError.value = '';
+    try {
+        const { data, invite_token } = await api('GET', `/api/boards/${info.value.id}/members`);
+        members.value = data;
+        // The link changes when someone is removed; show the one that works now.
+        info.value.inviteToken = invite_token;
+    } catch (e) {
+        membersError.value = e.data?.message ?? 'Could not load the members.';
+    }
 }
 
 async function copyLink() {
@@ -78,9 +85,10 @@ function canRemove(member) {
     return isOwner.value || member.id === me.id;
 }
 
-onMounted(async () => {
-    await loadMembers();
+onMounted(() => {
+    // Focus first: until it's inside the dialog, Tab could still leave it.
     (linkInput.value ?? dialog.value.querySelector('button'))?.focus();
+    loadMembers();
 });
 </script>
 
@@ -95,7 +103,7 @@ onMounted(async () => {
         >
             <div class="flex items-center">
                 <h2 id="share-title" class="text-lg font-semibold">Share “{{ info.name }}”</h2>
-                <button type="button" class="ml-auto rounded px-1.5 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white" aria-label="Close" @click="emit('close')">
+                <button type="button" class="ml-auto grid size-6 place-items-center rounded text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white" aria-label="Close" @click="emit('close')">
                     ✕
                 </button>
             </div>
@@ -125,7 +133,11 @@ onMounted(async () => {
             <p v-else class="mt-4 text-sm text-slate-600 dark:text-slate-400">Only members can invite people to this board.</p>
 
             <h3 class="mt-5 text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400">Members</h3>
-            <p v-if="!members" class="mt-2 text-sm text-slate-500">Loading…</p>
+            <p v-if="membersError" class="mt-2 text-sm text-slate-500" role="alert">
+                {{ membersError }}
+                <button type="button" class="ml-1 text-indigo-600 hover:underline" @click="loadMembers">Try again</button>
+            </p>
+            <p v-else-if="!members" class="mt-2 text-sm text-slate-500">Loading…</p>
             <ul v-else class="mt-2 divide-y divide-slate-100 dark:divide-slate-800" data-testid="members">
                 <li v-for="member in members" :key="member.id" class="flex items-center gap-2 py-2 text-sm">
                     <UserAvatar :user="member" size="sm" />
