@@ -286,6 +286,37 @@ await step('ordering: a card deleted while its move is in flight does not come b
     await card(b, 'Numbered by Bob').waitFor({ state: 'detached', timeout: 5000 });
 });
 
+await step('ordering: a snapshot taken before a move this tab just made does not undo it', async () => {
+    // Reconnecting re-fetches the snapshot. Let the server take it now, but
+    // hold it back until after Ada has moved a card and heard back.
+    let release;
+    const gate = new Promise((resolve) => (release = resolve));
+    let taken;
+    const snapshotTaken = new Promise((resolve) => (taken = resolve));
+    await a.route(/\/api\/boards\/\d+$/, async (route) => {
+        const response = await route.fetch();
+        taken();
+        await gate;
+        await route.fulfill({ response });
+    }, { times: 1 });
+    await a.evaluate(() => {
+        const pusher = window.Pusher.instances[0];
+        pusher.disconnect();
+        pusher.connect();
+    });
+    await snapshotTaken;
+
+    await card(a, 'Numbered by Ada').focus();
+    const moved = a.waitForResponse((r) => r.url().includes('/move'));
+    await a.keyboard.press('Alt+ArrowRight'); // To do → In progress
+    await moved;
+    release();
+    await a.waitForTimeout(1000);
+    if (!(await column(a, 'In progress').locator('[data-card-id]', { hasText: 'Numbered by Ada' }).count())) {
+        throw new Error('the older snapshot put the card back where it was');
+    }
+});
+
 await step('drag: a card someone deletes mid-drag is dropped cleanly', async () => {
     await addCard(b, 'Done', 'Deleted mid-drag');
     await card(a, 'Deleted mid-drag').waitFor({ timeout: 5000 });

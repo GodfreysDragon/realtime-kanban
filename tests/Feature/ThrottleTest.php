@@ -25,4 +25,16 @@ class ThrottleTest extends TestCase
         // Counted per user, not per IP: one person's script doesn't lock out the rest.
         $this->actingAs($bob)->getJson('/api/boards')->assertOk();
     }
+
+    public function test_reverbs_message_limit_is_configured_with_integers(): void
+    {
+        // Values from .env are strings, and Laravel's rate limiter passes the
+        // decay to Carbon, which only takes numbers: Reverb then fails on
+        // every message a socket sends, subscriptions included.
+        $limits = config('reverb.apps.apps.0.rate_limiting');
+
+        $this->assertTrue($limits['enabled']);
+        $this->assertIsInt($limits['max_attempts']);
+        $this->assertIsInt($limits['decay_seconds']);
+    }
 }

@@ -92,10 +92,11 @@ return [
                     // Every message a socket sends counts, whispers included. Cursors
                     // alone send about 20 a second; this allows 30 a second on
                     // average and drops the rest, so a modified client can't flood
-                    // everyone on a board.
+                    // everyone on a board. Cast: a string from .env makes Laravel's
+                    // rate limiter throw on every message, refusing them all.
                     'enabled' => env('REVERB_APP_RATE_LIMITING_ENABLED', true),
-                    'max_attempts' => env('REVERB_APP_RATE_LIMIT_MAX_ATTEMPTS', 150),
-                    'decay_seconds' => env('REVERB_APP_RATE_LIMIT_DECAY_SECONDS', 5),
+                    'max_attempts' => (int) env('REVERB_APP_RATE_LIMIT_MAX_ATTEMPTS', 150),
+                    'decay_seconds' => (int) env('REVERB_APP_RATE_LIMIT_DECAY_SECONDS', 5),
                     'terminate_on_limit' => env('REVERB_APP_RATE_LIMIT_TERMINATE', false),
                 ],
             ],

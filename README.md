@@ -114,6 +114,11 @@ older move: moves are last-writer-wins and don't bump the card's `version`, so t
 write's HTTP response carries the number of its own event (`seq`), so a slow response is checked the same way.
 Deleted cards and columns are remembered too, so a late event or response about one can't bring it back.
 
+A snapshot can itself be older than what the tab already knows: a resync can be served from before a move this tab
+just made, whose own event never comes back to it. Applying a snapshot therefore keeps any row with a newer applied
+number, leaves items whose move is still in flight where the tab put them, and keeps deleted items deleted (a delete
+that fails is the only thing that brings one back).
+
 ### No echo of your own changes
 The client applies its own changes optimistically. Every API call sends `X-Socket-ID`, and the server broadcasts with
 `->toOthers()`, so the tab that made a change never receives it back. The HTTP response then replaces the optimistic
@@ -219,7 +224,7 @@ The native HTML5 drag API never fires for touch, so cards and columns are dragge
 ## Tests
 
 ```sh
-php artisan test          # 64 PHPUnit feature tests
+php artisan test          # 65 PHPUnit feature tests
 npm run test:e2e          # two headless browsers against a running app + Reverb (see below)
 ```
 
@@ -236,7 +241,8 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
     event;
   - fractional positioning of cards, including a 60-drop stress test that forces a rebalance, and of columns;
   - cross-board validation;
-  - the per-user API rate limit;
+  - the per-user API rate limit, and Reverb's message limit being configured with numbers (a string from `.env`
+    made Reverb refuse every message);
   - real `/broadcasting/auth` presence signing with the Reverb driver.
 - **End-to-end** (`tests/e2e/two-users.mjs`) drives two signed-in users in headless Edge/Chrome through `playwright-core`,
   using the installed browser so nothing is downloaded. It checks:
@@ -251,8 +257,8 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - disconnect → missed event → reconnect → resync;
   - sequence numbers: ordinary traffic causes no resync, and a message dropped on an open socket is noticed and
     resynced;
-  - ordering: an older move delivered after a newer one is ignored, and a card deleted while its move is in flight
-    stays deleted;
+  - ordering: an older move delivered after a newer one is ignored, a card deleted while its move is in flight
+    stays deleted, and a snapshot taken before this tab's own move doesn't undo it;
   - a card deleted by someone else mid-drag is dropped cleanly;
   - keyboard: Enter opens a card, focus stays in the dialog, Escape returns focus to the card;
   - keyboard moves: Alt+Arrow moves a card to another column, keeps focus on it and announces it;

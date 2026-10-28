@@ -70,6 +70,10 @@ export function useBoard(boardId, me) {
     // requests in flight together can be processed in either order, leaving
     // the server on the older move while this tab shows the newer one.
     const moveQueues = {};
+    // Where this tab has put an item whose move the server hasn't answered
+    // yet ("card:12" => { column_id, position }). A snapshot can be served
+    // from before the move was saved; it mustn't put the item back.
+    const pendingMoves = {};
     let myEditingCardId = null;
 
     const sortedColumns = computed(() => Object.values(columns).sort(byPosition));
@@ -120,11 +124,26 @@ export function useBoard(boardId, me) {
         delete cards[id];
     }
 
+    /** @returns {string[]} the keys marked deleted, to undo if the delete fails */
     function removeColumn(id) {
-        deleted.add(`column:${id}`);
+        const keys = [`column:${id}`];
+        deleted.add(keys[0]);
         delete columns[id];
         for (const card of Object.values(cards)) {
-            if (card.column_id === id) removeCard(card.id);
+            if (card.column_id !== id) continue;
+            removeCard(card.id);
+            keys.push(`card:${card.id}`);
+        }
+        return keys;
+    }
+
+    /** Send a delete; if it fails, the rows weren't deleted after all. */
+    async function sendDelete(keys, send) {
+        try {
+            await send();
+        } catch (e) {
+            for (const key of keys) deleted.delete(key);
+            throw e;
         }
     }
 
@@ -143,14 +162,8 @@ export function useBoard(boardId, me) {
             const { data } = await api('GET', `/api/boards/${boardId}`);
             if (seq !== loadSeq) return;
             snapshotTaken(data.seq);
-            // The snapshot is newer than anything applied so far, and is the
-            // word on what exists (a failed delete puts the row back).
-            appliedSeqs = {};
-            for (const row of data.cards) deleted.delete(`card:${row.id}`);
-            for (const row of data.columns) deleted.delete(`column:${row.id}`);
             board.value = { id: data.id, name: data.name, public: data.public, role: data.role, inviteToken: data.invite_token ?? null };
-            replace(columns, data.columns);
-            replace(cards, data.cards);
+            applySnapshot(data);
             activities.value = data.activities;
             error.value = null;
         } catch (e) {
@@ -205,6 +218,34 @@ export function useBoard(boardId, me) {
     const stopEventHeader = onBoardEvents((events) => {
         for (const [eventBoardId, seq] of events) if (eventBoardId === boardId) noteSeq(seq);
     });
+
+    /**
+     * Replace the board with a snapshot, except where this tab already knows
+     * better. A snapshot can be served from before a change this tab made or
+     * received: a row with a newer applied seq (say, our own move's response)
+     * is kept, an item whose move is still in flight stays where we put it,
+     * and a deleted item stays deleted.
+     */
+    function applySnapshot(data) {
+        const newer = {};
+        for (const [key, seq] of Object.entries(appliedSeqs)) {
+            if (seq <= data.seq) continue;
+            const [kind, id] = key.split(':');
+            const row = kind === 'card' ? cards[id] : columns[id];
+            if (row) newer[key] = { ...row };
+        }
+
+        replace(columns, data.columns.filter((row) => !deleted.has(`column:${row.id}`)));
+        replace(cards, data.cards.filter((row) => !deleted.has(`card:${row.id}`)));
+
+        appliedSeqs = Object.fromEntries(Object.entries(appliedSeqs).filter(([, seq]) => seq > data.seq));
+        for (const [key, row] of Object.entries(newer)) (key.startsWith('card:') ? cards : columns)[row.id] = row;
+        for (const [key, placement] of Object.entries(pendingMoves)) {
+            const [kind, id] = key.split(':');
+            const item = kind === 'card' ? cards[id] : columns[id];
+            if (item) Object.assign(item, placement);
+        }
+    }
 
     function replace(target, rows) {
         for (const key of Object.keys(target)) delete target[key];
@@ -391,6 +432,7 @@ export function useBoard(boardId, me) {
 
         card.column_id = columnId;
         card.position = positionBetween(siblings[index - 1]?.position, siblings[index]?.position);
+        pendingMoves[`card:${cardId}`] = { column_id: columnId, position: card.position };
 
         sendMove(
             `card:${cardId}`,
@@ -408,7 +450,10 @@ export function useBoard(boardId, me) {
      * Moves of an item deleted meanwhile are dropped.
      */
     function sendMove(key, send, apply, failureMessage) {
-        if (deleted.has(key)) return;
+        if (deleted.has(key)) {
+            delete pendingMoves[key];
+            return;
+        }
         const queue = (moveQueues[key] ??= { busy: false, next: null });
         if (queue.busy) {
             queue.next = { send, apply, failureMessage };
@@ -417,13 +462,20 @@ export function useBoard(boardId, me) {
 
         queue.busy = true;
         guarded(async () => {
-            const response = await send();
-            if (!queue.next) apply(response);
+            try {
+                const response = await send();
+                if (!queue.next) apply(response);
+            } catch (e) {
+                // The move failed: the snapshot guarded() fetches next is right.
+                delete pendingMoves[key];
+                throw e;
+            }
         }, failureMessage).finally(() => {
             queue.busy = false;
             const next = queue.next;
             queue.next = null;
             if (next) sendMove(key, next.send, next.apply, next.failureMessage);
+            else delete pendingMoves[key];
         });
     }
 
@@ -435,7 +487,7 @@ export function useBoard(boardId, me) {
 
     function deleteCard(cardId) {
         removeCard(cardId);
-        return guarded(() => api('DELETE', `/api/cards/${cardId}`), 'Could not delete the card.');
+        return guarded(() => sendDelete([`card:${cardId}`], () => api('DELETE', `/api/cards/${cardId}`)), 'Could not delete the card.');
     }
 
     function addColumn(name) {
@@ -461,6 +513,7 @@ export function useBoard(boardId, me) {
         if (column.position > lower && column.position < upper) return;
 
         column.position = positionBetween(others[index - 1]?.position, others[index]?.position);
+        pendingMoves[`column:${columnId}`] = { position: column.position };
 
         sendMove(
             `column:${columnId}`,
@@ -471,8 +524,8 @@ export function useBoard(boardId, me) {
     }
 
     function deleteColumn(columnId) {
-        removeColumn(columnId);
-        return guarded(() => api('DELETE', `/api/columns/${columnId}`), 'Could not delete the column.');
+        const keys = removeColumn(columnId);
+        return guarded(() => sendDelete(keys, () => api('DELETE', `/api/columns/${columnId}`)), 'Could not delete the column.');
     }
 
     /** Leave the board; the caller navigates away once it's done. */
