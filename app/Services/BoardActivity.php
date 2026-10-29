@@ -20,7 +20,7 @@ class BoardActivity
             'description' => $description,
         ]);
 
-        broadcast(new ActivityRecorded($activity->setRelation('user', $user)));
+        (new ActivityRecorded($activity->setRelation('user', $user)))->send(toOthers: false);
 
         return $activity;
     }

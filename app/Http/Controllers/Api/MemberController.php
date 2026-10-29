@@ -40,14 +40,24 @@ class MemberController extends Controller
         return response()->json(['data' => $members, 'invite_token' => $isMember ? $board->invite_token : null]);
     }
 
-    /** Accept an invite link. Joining a board you're already on is a no-op. */
+    /**
+     * Accept an invite link. Joining a board you're already on is a no-op,
+     * also when two requests (a double click, two tabs) race to join.
+     */
     public function accept(Request $request, string $token): JsonResponse
     {
         $board = Board::where('invite_token', $token)->first();
         abort_if($board === null, Response::HTTP_NOT_FOUND, 'This invite link is no longer valid.');
 
-        if ($board->roleOf($request->user()) === null) {
-            $board->addMember($request->user());
+        $joined = DB::table('board_user')->insertOrIgnore([
+            'board_id' => $board->id,
+            'user_id' => $request->user()->id,
+            'role' => Board::MEMBER,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        if ($joined) {
             $this->activity->record($board->id, $request->user(), 'member.joined', 'joined the board');
         }
 
@@ -83,7 +93,7 @@ class MemberController extends Controller
 
         // Sent to everyone, the removed member included: their tab is still
         // subscribed and is the one that has to react.
-        broadcast(new MemberRemoved($board->id, $user->id));
+        (new MemberRemoved($board->id, $user->id))->send(toOthers: false);
 
         // Their subscription was authorised while they were a member. Close
         // their sockets so a client that ignores the event above can't stay

@@ -79,9 +79,10 @@ class BoardController extends Controller
 
         $board->update($validated);
 
-        broadcast(new BoardRenamed($board))->toOthers();
+        (new BoardRenamed($board))->send();
         $this->activity->record($board->id, $request->user(), 'board.renamed', "renamed the board to “{$board->name}”");
 
-        return BoardResource::make($board);
+        // Read again so the seq it reports includes the events just sent.
+        return BoardResource::make($board->refresh());
     }
 }

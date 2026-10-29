@@ -41,7 +41,7 @@ class ColumnController extends Controller
             ]);
         });
 
-        broadcast($event = new ColumnCreated($column))->toOthers();
+        $event = (new ColumnCreated($column))->send();
         $this->activity->record($board->id, $request->user(), 'column.created', "added column “{$column->name}”");
 
         return ColumnResource::make($column)->additional(['seq' => $event->seq])->response()->setStatusCode(201);
@@ -68,10 +68,10 @@ class ColumnController extends Controller
         });
 
         if ($rebalanced !== null) {
-            broadcast(new ColumnsRebalanced($column->board_id, $rebalanced));
+            (new ColumnsRebalanced($column->board_id, $rebalanced))->send(toOthers: false);
         }
 
-        broadcast($event = new ColumnMoved($column))->toOthers();
+        $event = (new ColumnMoved($column))->send();
 
         return ColumnResource::make($column)->additional(['seq' => $event->seq]);
     }
@@ -84,7 +84,7 @@ class ColumnController extends Controller
 
         $column->update($validated);
 
-        broadcast($event = new ColumnUpdated($column))->toOthers();
+        $event = (new ColumnUpdated($column))->send();
         $this->activity->record($column->board_id, $request->user(), 'column.renamed', "renamed column “{$previousName}” to “{$column->name}”");
 
         return ColumnResource::make($column)->additional(['seq' => $event->seq]);
@@ -96,7 +96,7 @@ class ColumnController extends Controller
         $cardCount = $column->cards()->count();
         $column->delete();
 
-        broadcast(new ColumnDeleted($column->board_id, $column->id))->toOthers();
+        (new ColumnDeleted($column->board_id, $column->id))->send();
         $this->activity->record(
             $column->board_id,
             $request->user(),

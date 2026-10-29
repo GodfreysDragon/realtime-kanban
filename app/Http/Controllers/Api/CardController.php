@@ -34,7 +34,7 @@ class CardController extends Controller
         $card = DB::transaction(function () use ($request, $column) {
             // Same lock as move(): two cards added at once can't read the same
             // max position, and an add can't interleave with a rebalance.
-            Column::whereKey($column->id)->lockForUpdate()->first();
+            $this->lockColumn($column->id);
 
             return Card::create([
                 ...$request->validated(),
@@ -46,7 +46,7 @@ class CardController extends Controller
             ]);
         })->refresh();
 
-        broadcast($event = new CardCreated($card))->toOthers();
+        $event = (new CardCreated($card))->send();
         $this->activity->record($card->board_id, $request->user(), 'card.created', "added “{$this->short($card->title)}” to {$column->name}");
 
         return CardResource::make($card)->additional(['seq' => $event->seq])->response()->setStatusCode(201);
@@ -62,6 +62,13 @@ class CardController extends Controller
     {
         $expectedVersion = (int) $request->validated('version');
         $changes = $request->safe()->except('version');
+
+        // Nothing actually changes: don't bump the version (that would turn
+        // someone else's open edit into a conflict) or tell anyone.
+        $unchanged = collect($changes)->every(fn ($value, $field) => $card->{$field} === $value);
+        if ($card->version === $expectedVersion && $unchanged) {
+            return CardResource::make($card)->response();
+        }
 
         $updated = Card::whereKey($card->id)
             ->where('version', $expectedVersion)
@@ -82,7 +89,7 @@ class CardController extends Controller
             ], Response::HTTP_CONFLICT);
         }
 
-        broadcast($event = new CardUpdated($card))->toOthers();
+        $event = (new CardUpdated($card))->send();
         $this->activity->record($card->board_id, $request->user(), 'card.updated', "edited “{$this->short($card->title)}”");
 
         return CardResource::make($card)->additional(['seq' => $event->seq])->response();
@@ -97,8 +104,8 @@ class CardController extends Controller
         $fromColumn = $card->column;
         $toColumnId = (int) $request->validated('column_id');
 
-        $rebalanced = DB::transaction(function () use ($request, $card, $toColumnId) {
-            Column::whereKey($toColumnId)->lockForUpdate()->first();
+        [$rebalanced, $toColumn] = DB::transaction(function () use ($request, $card, $toColumnId) {
+            $toColumn = $this->lockColumn($toColumnId);
 
             $placement = $this->positioner->placeAfter($card, $toColumnId, $request->validated('after_id'));
 
@@ -112,17 +119,16 @@ class CardController extends Controller
             // than the version they hold, so broadcast the row as it is now.
             $card->refresh();
 
-            return $placement['rebalanced'];
+            return [$placement['rebalanced'], $toColumn];
         });
 
         if ($rebalanced !== null) {
-            broadcast(new ColumnRebalanced($card->board_id, $toColumnId, $rebalanced));
+            (new ColumnRebalanced($card->board_id, $toColumnId, $rebalanced))->send(toOthers: false);
         }
 
-        broadcast($event = new CardMoved($card))->toOthers();
+        $event = (new CardMoved($card))->send();
 
         if ($fromColumn->id !== $toColumnId) {
-            $toColumn = Column::find($toColumnId);
             $this->activity->record($card->board_id, $request->user(), 'card.moved', "moved “{$this->short($card->title)}” from {$fromColumn->name} to {$toColumn->name}");
         }
 
@@ -134,10 +140,23 @@ class CardController extends Controller
         Gate::authorize('view', $card->board);
         $card->delete();
 
-        broadcast(new CardDeleted($card->board_id, $card->id))->toOthers();
+        (new CardDeleted($card->board_id, $card->id))->send();
         $this->activity->record($card->board_id, request()->user(), 'card.deleted', "deleted “{$this->short($card->title)}”");
 
         return response()->noContent();
+    }
+
+    /**
+     * Lock the column's row for the rest of the transaction. Validation and
+     * route binding saw it, but someone may have deleted it since: answer 404
+     * rather than letting the foreign key fail the write with a 500.
+     */
+    private function lockColumn(int $id): Column
+    {
+        $column = Column::whereKey($id)->lockForUpdate()->first();
+        abort_if($column === null, Response::HTTP_NOT_FOUND, 'That column was just deleted.');
+
+        return $column;
     }
 
     private function short(string $title): string

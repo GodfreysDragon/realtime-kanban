@@ -116,4 +116,10 @@ class EventSequenceTest extends TestCase
         $this->putJson("/api/columns/{$column['id']}", ['name' => 'Soon'])->assertJsonPath('seq', 8);
         $this->patchJson("/api/columns/{$column['id']}/move", ['after_id' => null])->assertJsonPath('seq', 10);
     }
+
+    public function test_renaming_the_board_reports_the_current_sequence_number(): void
+    {
+        // board.renamed and its activity entry take 1 and 2.
+        $this->putJson("/api/boards/{$this->board->id}", ['name' => 'Renamed'])->assertOk()->assertJsonPath('data.seq', 2);
+    }
 }

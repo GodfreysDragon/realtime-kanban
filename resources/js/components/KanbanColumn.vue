@@ -64,10 +64,24 @@ async function startRename() {
     nameInput.value?.select();
 }
 
-function finishRename() {
+const nameButton = ref(null);
+
+/** @param {boolean} [refocus] finished from the keyboard: put focus back on the name */
+async function finishRename(refocus = false) {
+    if (!renaming.value) return;
     const name = nameDraft.value.trim();
     renaming.value = false;
     if (name && name !== props.column.name) board.renameColumn(props.column.id, name);
+    if (refocus) {
+        await nextTick();
+        nameButton.value?.focus();
+    }
+}
+
+async function cancelRename() {
+    renaming.value = false;
+    await nextTick();
+    nameButton.value?.focus();
 }
 
 function remove() {
@@ -92,12 +106,13 @@ function remove() {
                 maxlength="60"
                 aria-label="Column name"
                 class="min-w-0 flex-1 rounded border border-indigo-400 bg-white px-1.5 py-0.5 text-sm font-semibold outline-none dark:bg-slate-950"
-                @keydown.enter.prevent="finishRename"
-                @keydown.esc="renaming = false"
-                @blur="finishRename"
+                @keydown.enter.prevent="finishRename(true)"
+                @keydown.esc="cancelRename"
+                @blur="finishRename()"
             />
             <h2 v-else class="min-w-0 flex-1 truncate text-sm font-semibold">
                 <button
+                    ref="nameButton"
                     type="button"
                     class="w-full cursor-text truncate rounded text-left"
                     title="Rename column"

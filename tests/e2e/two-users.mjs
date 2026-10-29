@@ -238,6 +238,23 @@ await step('sequence numbers: a message lost without a disconnect is noticed and
     if (snapshots.B === before) throw new Error('the card arrived without a resync, so the message was not dropped');
 });
 
+await step('live cursor: lands on the same card for someone with larger text', async () => {
+    // Bob's cards are taller, so the same card sits lower on his screen.
+    const bigger = await b.addStyleTag({ content: 'html { font-size: 20px }' });
+    await b.waitForTimeout(200);
+    const target = await card(a, 'Lost in transit').boundingBox();
+    await a.mouse.move(target.x + 30, target.y + target.height / 2, { steps: 4 });
+    await a.mouse.move(target.x + 40, target.y + target.height / 2, { steps: 2 });
+    await b.waitForTimeout(600);
+
+    const onBob = await card(b, 'Lost in transit').boundingBox();
+    const cursor = await b.locator('[data-testid=live-cursor]', { hasText: 'Ada' }).boundingBox();
+    await bigger.evaluate((el) => el.remove());
+    if (!cursor) throw new Error('Bob does not see Ada\'s cursor');
+    const inside = cursor.x >= onBob.x && cursor.x <= onBob.x + onBob.width && cursor.y >= onBob.y && cursor.y <= onBob.y + onBob.height;
+    if (!inside) throw new Error(`Ada's cursor tip is at ${Math.round(cursor.x)},${Math.round(cursor.y)}, not on the card at ${Math.round(onBob.x)},${Math.round(onBob.y)}`);
+});
+
 await step('ordering: an older move delivered late does not undo a newer one', async () => {
     // Hold back the next card.moved on Bob's socket until the one after it
     // has been delivered, as two concurrent requests can.
@@ -385,6 +402,50 @@ await step('keyboard: focus returns to a card moved from its own dialog', async 
     if (!(await a.evaluate(() => document.activeElement?.closest('[data-card-id]')?.textContent.includes('Goes on top')))) throw new Error('focus was lost');
 });
 
+await step('keyboard: a focused card moved by someone else keeps focus', async () => {
+    await card(b, 'Ada title').focus();
+    await card(a, 'Ada title').focus();
+    await a.keyboard.press('Alt+ArrowLeft');
+    await column(b, 'In progress').locator('[data-card-id]', { hasText: 'Ada title' }).waitFor({ timeout: 5000 });
+    await b.waitForTimeout(200);
+    if (!(await b.evaluate(() => document.activeElement?.closest('[data-card-id]')?.textContent.includes('Ada title')))) throw new Error('Bob lost focus');
+    await a.keyboard.press('Alt+ArrowRight');
+    await column(b, 'Done').locator('[data-card-id]', { hasText: 'Ada title' }).waitFor({ timeout: 5000 });
+});
+
+await step('keyboard: renaming returns focus to the name, and a move at the edge is announced', async () => {
+    await a.locator('h1 button').focus();
+    await a.keyboard.press('Enter');
+    await a.keyboard.press('End');
+    await a.keyboard.type(' 2');
+    await a.keyboard.press('Enter');
+    await a.locator('h1 button', { hasText: 'E2E board 2' }).waitFor({ timeout: 2000 });
+    if (!(await a.evaluate(() => document.activeElement?.closest('h1') !== null))) throw new Error('focus did not return to the board name');
+
+    await column(a, 'Done').locator('h2 button').focus();
+    await a.keyboard.press('Enter');
+    await a.keyboard.press('Escape');
+    if (!(await a.evaluate(() => document.activeElement?.closest('h2') !== null))) throw new Error('focus did not return to the column name');
+
+    const top = column(a, 'Done').locator('[data-card-id]').first();
+    await top.focus();
+    await a.keyboard.press('Alt+ArrowUp');
+    await a.locator('[aria-live=assertive]', { hasText: 'is already at the top of Done' }).waitFor({ state: 'attached', timeout: 2000 });
+});
+
+await step('toasts: an error is announced urgently and can be dismissed', async () => {
+    await a.route('**/api/cards/*/move', (route) => route.abort());
+    await card(a, 'Ada title').focus();
+    await a.keyboard.press('Alt+ArrowLeft');
+    const toast = a.locator('[role=alert] [data-testid=toast]', { hasText: 'Could not move the card.' });
+    await toast.waitFor({ timeout: 5000 });
+    await a.unroute('**/api/cards/*/move');
+    await toast.locator('button[aria-label=Dismiss]').click();
+    await toast.waitFor({ state: 'detached', timeout: 2000 });
+    // The failed move was undone by the resync that followed it.
+    await column(a, 'Done').locator('[data-card-id]', { hasText: 'Ada title' }).waitFor({ timeout: 5000 });
+});
+
 await step('delete propagates and closes the dialog Bob has open', async () => {
     await card(b, 'Made while Bob was offline').click();
     await b.waitForSelector('[role=dialog]');
@@ -524,6 +585,17 @@ await step('touch: a long press drags a card to another column, a quick swipe sc
     if ((await scroller.evaluate((el) => el.scrollLeft)) <= scrolledBefore) throw new Error('the swipe did not scroll the board');
     if (!(await column(phone, 'To do').locator('[data-card-id]', { hasText: 'Swiped across' }).count())) throw new Error('the swipe moved the card');
     await phone.screenshot({ path: `${OUT}/touch.png` });
+
+    // The activity panel overlays the board on a phone: it takes focus, and
+    // Escape or the backdrop closes it and hands focus back.
+    await phone.click('button:has-text("Activity")');
+    await phone.waitForFunction(() => document.activeElement?.closest('aside') !== null);
+    await phone.keyboard.press('Escape');
+    await phone.waitForSelector('aside', { state: 'detached', timeout: 2000 });
+    if (!(await phone.evaluate(() => document.activeElement?.textContent.trim() === 'Activity'))) throw new Error('focus did not return to the Activity button');
+    await phone.click('button:has-text("Activity")');
+    await phone.click('[data-testid=activity-backdrop]', { position: { x: 20, y: 300 } });
+    await phone.waitForSelector('aside', { state: 'detached', timeout: 2000 });
 
     // Leaving on purpose isn't reported as being removed.
     await phone.click('button:has-text("Share")');

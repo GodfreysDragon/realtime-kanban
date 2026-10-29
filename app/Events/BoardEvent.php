@@ -7,6 +7,7 @@ use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PresenceChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
+use Throwable;
 
 /**
  * Base for everything pushed to a board's presence channel.
@@ -35,6 +36,29 @@ abstract class BoardEvent implements ShouldBroadcastNow
     public function broadcastOn(): PresenceChannel
     {
         return new PresenceChannel("board.{$this->boardId}");
+    }
+
+    /**
+     * Broadcast this event, to everyone but the sender's socket by default.
+     *
+     * Never fails the request: by now the change it describes is committed,
+     * and answering 500 would make the client undo a change that happened.
+     * If Reverb is down the failure is reported instead; the event's number
+     * has been used, so other clients see a gap and re-sync once they can.
+     */
+    public function send(bool $toOthers = true): static
+    {
+        try {
+            $pending = broadcast($this);
+            if ($toOthers) {
+                $pending->toOthers();
+            }
+            unset($pending); // a PendingBroadcast dispatches when destroyed: here, inside the try
+        } catch (Throwable $e) {
+            report($e);
+        }
+
+        return $this;
     }
 
     abstract public function broadcastAs(): string;
