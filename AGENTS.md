@@ -25,7 +25,8 @@ npm run test:e2e                 # two-browser test; needs `php artisan serve` a
   last-writer-wins and do not bump `version`, so a drag never turns into an edit conflict.
 - **Board events extend `BoardEvent` and implement `payload()`.** The base class adds the board's sequence number;
   construct the event only after the change has committed, or the snapshot ordering argument in `BoardController::show`
-  breaks.
+  breaks. Send it with `->send()` (or `->send(toOthers: false)`), never `broadcast()`: a Reverb outage must not turn a
+  committed write into a 500.
 - **Access goes through `BoardPolicy`.** `view` guards the API (in form requests' `authorize()` or `Gate::authorize`)
   and the presence channel callback alike; a new endpoint on a board must check it too, and sit in the
   `throttle:board-api` route group.

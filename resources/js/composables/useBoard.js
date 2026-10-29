@@ -327,9 +327,9 @@ export function useBoard(boardId, me) {
             if (board.value?.public) Object.assign(board.value, { role: null, inviteToken: null });
             else removed.value = true;
         })
-        .listenForWhisper('cursor', fromSender((userId, { x, y }) => {
+        .listenForWhisper('cursor', fromSender((userId, { x, y, card, fx, fy, column, dx, dy }) => {
             if (x == null) delete cursors[userId];
-            else cursors[userId] = { x, y, at: Date.now() };
+            else cursors[userId] = { x, y, card, fx, fy, column, dx, dy, at: Date.now() };
         }))
         .listenForWhisper('editing', fromSender((userId, { cardId }) => setOrClear(editing, userId, cardId)))
         .listenForWhisper('dragging', fromSender((userId, { cardId }) => setOrClear(dragging, userId, cardId)));
@@ -546,8 +546,13 @@ export function useBoard(boardId, me) {
 
     // --- presence signals ----------------------------------------------------
 
-    function sendCursor(x, y) {
-        whisper('cursor', { x, y });
+    /**
+     * @param {object|null} position board coordinates (x, y), plus an anchor
+     *   when the pointer is over a card (card, fx, fy) or a column (column,
+     *   dx, dy); null hides the cursor. See BoardView's trackPointer.
+     */
+    function sendCursor(position) {
+        whisper('cursor', position ?? { x: null, y: null });
     }
 
     function setEditing(cardId) {

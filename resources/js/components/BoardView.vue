@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, provide, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue';
 import { useBoard } from '../composables/useBoard';
 import { useToasts } from '../composables/useToasts';
 import { cancelPointerDrag, startPointerDrag } from '../lib/pointerDrag';
@@ -105,7 +105,10 @@ function startColumnDrag(event, column, element) {
 async function moveColumnByKey(column, direction) {
     const columns = board.columns.value;
     const index = columns.findIndex((c) => c.id === column.id);
-    if (direction === 'left' ? index === 0 : index === columns.length - 1) return;
+    if (direction === 'left' ? index === 0 : index === columns.length - 1) {
+        announce(`“${column.name}” is already the ${direction === 'left' ? 'first' : 'last'} column.`);
+        return;
+    }
 
     const afterId = direction === 'left' ? (columns[index - 2]?.id ?? null) : columns[index + 1].id;
     board.moveColumn(column.id, afterId);
@@ -113,12 +116,19 @@ async function moveColumnByKey(column, direction) {
     await nextTick();
     document.querySelector(`[data-column-id="${column.id}"] h2 button`)?.focus();
     const placed = board.columns.value;
-    announcement.value = `Moved column “${column.name}” to position ${placed.findIndex((c) => c.id === column.id) + 1} of ${placed.length}.`;
+    announce(`Moved column “${column.name}” to position ${placed.findIndex((c) => c.id === column.id) + 1} of ${placed.length}.`);
 }
 
 // --- moving cards: keyboard --------------------------------------------------
 
 const announcement = ref('');
+
+/** Say something in the live region, even if it's the same as last time. */
+async function announce(text) {
+    announcement.value = '';
+    await nextTick();
+    announcement.value = text;
+}
 
 /** Alt+Arrow on a focused card: up/down within its column, left/right to the next column. */
 async function moveCardByKey(card, direction) {
@@ -130,14 +140,14 @@ async function moveCardByKey(card, direction) {
     let target = columns[columnIndex];
     let afterId;
     if (direction === 'up') {
-        if (index === 0) return;
+        if (index === 0) return announce(`“${card.title}” is already at the top of ${target.name}.`);
         afterId = siblings[index - 2]?.id ?? null;
     } else if (direction === 'down') {
-        if (index === siblings.length - 1) return;
+        if (index === siblings.length - 1) return announce(`“${card.title}” is already at the bottom of ${target.name}.`);
         afterId = siblings[index + 1].id;
     } else {
         target = columns[columnIndex + (direction === 'left' ? -1 : 1)];
-        if (!target) return;
+        if (!target) return announce(`“${card.title}” is already in the ${direction === 'left' ? 'first' : 'last'} column.`);
         const targetCards = board.cardsByColumn.value[target.id] ?? [];
         afterId = targetCards[Math.min(index, targetCards.length) - 1]?.id ?? null;
     }
@@ -148,10 +158,70 @@ async function moveCardByKey(card, direction) {
     await nextTick();
     document.querySelector(`[data-card-id="${card.id}"]`)?.focus();
     const placed = board.cardsByColumn.value[target.id];
-    announcement.value = `Moved “${card.title}” to position ${placed.findIndex((c) => c.id === card.id) + 1} of ${placed.length} in ${target.name}.`;
+    announce(`Moved “${card.title}” to position ${placed.findIndex((c) => c.id === card.id) + 1} of ${placed.length} in ${target.name}.`);
 }
 
+// --- keeping the keyboard on a card that moves --------------------------------
+
+// A card that changes column (someone else moved it) is a new element, and
+// the old one took focus with it. Remember which card had focus, and give
+// it back when the board re-renders, unless focus left the card on purpose.
+let focusedCardId = null;
+
+function onFocusIn(event) {
+    focusedCardId = event.target.closest?.('[data-card-id]')?.dataset.cardId ?? null;
+}
+
+function onFocusOut(event) {
+    const element = event.target.closest?.('[data-card-id]');
+    if (!element) return;
+    // Still on the page means focus moved away by choice (a click elsewhere).
+    setTimeout(() => {
+        if (element.isConnected && focusedCardId === element.dataset.cardId && !element.contains(document.activeElement)) focusedCardId = null;
+    });
+}
+
+watch(
+    () => board.cardsByColumn.value,
+    async () => {
+        await nextTick();
+        if (!focusedCardId || (document.activeElement && document.activeElement !== document.body)) return;
+        document.querySelector(`[data-card-id="${focusedCardId}"]`)?.focus({ preventScroll: true });
+    },
+    { flush: 'post' },
+);
+
+// --- the activity panel on small screens ------------------------------------
+
+// Below lg the panel overlays the board, so it behaves like a dialog: a
+// backdrop, Escape to close, and focus in and back out.
+const overlayActivity = window.matchMedia('(max-width: 1023.98px)');
+const activityPanel = ref(null);
+const activityButton = ref(null);
+
+watch(showActivity, async (open) => {
+    if (!overlayActivity.matches) return;
+    await nextTick();
+    if (open) activityPanel.value?.querySelector('button')?.focus();
+    else activityButton.value?.focus();
+});
+
+function onWindowKeydown(event) {
+    if (event.key !== 'Escape' || !showActivity.value || !overlayActivity.matches) return;
+    if (openCardId.value || showShare.value) return; // their own Escape comes first
+    showActivity.value = false;
+}
+
+onMounted(() => {
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    window.addEventListener('keydown', onWindowKeydown);
+});
+
 onBeforeUnmount(() => {
+    document.removeEventListener('focusin', onFocusIn);
+    document.removeEventListener('focusout', onFocusOut);
+    window.removeEventListener('keydown', onWindowKeydown);
     // A drag mustn't outlive the board (removed mid-drag, or navigated away):
     // its drop would go to a board this view no longer shows.
     cancelPointerDrag();
@@ -190,6 +260,7 @@ const presence = computed(() => [props.me, ...board.members.value.filter((m) => 
 const renaming = ref(false);
 const nameDraft = ref('');
 const nameInput = ref(null);
+const nameButton = ref(null);
 
 async function startRename() {
     nameDraft.value = board.board.value.name;
@@ -198,10 +269,22 @@ async function startRename() {
     nameInput.value?.select();
 }
 
-function finishRename() {
+/** @param {boolean} [refocus] finished from the keyboard: put focus back on the name */
+async function finishRename(refocus = false) {
+    if (!renaming.value) return;
     const name = nameDraft.value.trim();
     renaming.value = false;
     if (name && name !== board.board.value.name) board.renameBoard(name);
+    if (refocus) {
+        await nextTick();
+        nameButton.value?.focus();
+    }
+}
+
+async function cancelRename() {
+    renaming.value = false;
+    await nextTick();
+    nameButton.value?.focus();
 }
 
 // --- new column ----------------------------------------------------------
@@ -220,18 +303,45 @@ function addColumn() {
 const surface = ref(null);
 let lastCursorSentAt = 0;
 
-/** Whisper my pointer position, in board-content coordinates, at most ~20×/s. */
+/**
+ * Whisper my pointer position, at most ~20×/s.
+ *
+ * Other people's layouts differ (text size, window height, a scrolled
+ * column), so board coordinates alone would put my cursor beside the card
+ * I'm pointing at. The position is anchored to what's under the pointer
+ * instead: the card (as fractions of its size) or the column (as an offset
+ * from its corner). Board coordinates are the fallback. LiveCursors does
+ * the reverse with the viewer's own layout.
+ */
 function trackPointer(event) {
     const now = performance.now();
     if (now - lastCursorSentAt < 50) return;
     lastCursorSentAt = now;
 
-    const rect = surface.value.getBoundingClientRect();
-    board.sendCursor(Math.round(event.clientX - rect.left), Math.round(event.clientY - rect.top));
+    const [x, y] = [event.clientX, event.clientY];
+    const origin = surface.value.getBoundingClientRect();
+    const position = { x: Math.round(x - origin.left), y: Math.round(y - origin.top) };
+
+    const under = document.elementFromPoint(x, y);
+    const card = under?.closest('[data-card-id]');
+    const column = under?.closest('section[data-column-id]');
+    if (card && surface.value.contains(card)) {
+        const rect = card.getBoundingClientRect();
+        Object.assign(position, { card: Number(card.dataset.cardId), fx: round((x - rect.left) / rect.width), fy: round((y - rect.top) / rect.height) });
+    } else if (column) {
+        const rect = column.getBoundingClientRect();
+        Object.assign(position, { column: Number(column.dataset.columnId), dx: Math.round(x - rect.left), dy: Math.round(y - rect.top) });
+    }
+
+    board.sendCursor(position);
+}
+
+function round(fraction) {
+    return Math.round(fraction * 1000) / 1000;
 }
 
 function hidePointer() {
-    board.sendCursor(null, null);
+    board.sendCursor(null);
 }
 </script>
 
@@ -253,12 +363,18 @@ function hidePointer() {
                     maxlength="80"
                     aria-label="Board name"
                     class="rounded-md border border-indigo-400 bg-white px-2 py-0.5 text-lg font-semibold outline-none dark:bg-slate-900"
-                    @keydown.enter.prevent="finishRename"
-                    @keydown.esc="renaming = false"
-                    @blur="finishRename"
+                    @keydown.enter.prevent="finishRename(true)"
+                    @keydown.esc="cancelRename"
+                    @blur="finishRename()"
                 />
                 <h1 v-else class="text-lg font-semibold">
-                    <button type="button" class="cursor-text rounded-md px-2 py-0.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" title="Rename board" @click="startRename">
+                    <button
+                        ref="nameButton"
+                        type="button"
+                        class="cursor-text rounded-md px-2 py-0.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800"
+                        title="Rename board"
+                        @click="startRename"
+                    >
                         {{ board.board.value.name }}
                     </button>
                 </h1>
@@ -280,6 +396,7 @@ function hidePointer() {
                     </button>
                     <button
                         class="rounded-md border border-slate-200 px-2.5 py-1 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+                        ref="activityButton"
                         :aria-pressed="showActivity"
                         @click="showActivity = !showActivity"
                     >
@@ -327,8 +444,11 @@ function hidePointer() {
                     </div>
                 </div>
 
+                <div v-if="showActivity" class="fixed inset-0 z-20 bg-slate-950/30 lg:hidden" aria-hidden="true" data-testid="activity-backdrop" @click="showActivity = false" />
                 <aside
                     v-if="showActivity"
+                    ref="activityPanel"
+                    aria-label="Activity"
                     class="fixed inset-y-0 right-0 z-30 w-72 shrink-0 overflow-y-auto border-l border-slate-200 bg-white shadow-xl lg:static lg:shadow-none dark:border-slate-800 dark:bg-slate-900"
                 >
                     <ActivityFeed @close="showActivity = false" />

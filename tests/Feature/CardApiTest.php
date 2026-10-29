@@ -102,6 +102,20 @@ class CardApiTest extends TestCase
         Event::assertDispatched(CardUpdated::class, fn ($e) => $e->card->version === 2);
     }
 
+    public function test_a_save_that_changes_nothing_keeps_the_version_and_tells_no_one(): void
+    {
+        $card = $this->card($this->todo, 1024, ['title' => 'Same', 'description' => null, 'label' => null]);
+
+        $this->putJson("/api/cards/{$card->id}", ['title' => 'Same', 'description' => null, 'label' => null, 'version' => 1])
+            ->assertOk()
+            ->assertJsonPath('data.version', 1);
+        $this->putJson("/api/cards/{$card->id}", ['version' => 1])->assertOk()->assertJsonPath('data.version', 1);
+
+        $this->assertSame(1, $card->fresh()->version);
+        Event::assertNotDispatched(CardUpdated::class);
+        Event::assertNotDispatched(ActivityRecorded::class);
+    }
+
     public function test_a_stale_version_is_rejected_with_the_current_card(): void
     {
         $card = $this->card($this->todo, 1024, ['title' => 'Original']);

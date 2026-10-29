@@ -17,7 +17,7 @@ The project is about real-time, stateful work beyond plain request and response:
 **Stack:** Laravel 13 · PHP 8.4 · Laravel Reverb (WebSocket server, Pusher protocol) · Laravel Echo + pusher-js · Vue 3 ·
 Tailwind 4 · SQLite (any Laravel database works)
 
-![Three people on one board: Grace is editing "Press kit" while Linus drags "Fix signup email bounce", and his cursor is visible](docs/screenshot-board.png)
+![Ada and Grace on the same board, side by side: Grace's cursor shows on Ada's screen, Ada drags a card into In progress and Grace sees it move, Grace edits "Press kit" while Ada sees "Grace is editing", and a card Ada adds appears for Grace](docs/demo.gif)
 
 <details>
 <summary>More screenshots</summary>
@@ -80,7 +80,7 @@ Set `REVERB_ALLOWED_ORIGINS` to the comma-separated hosts allowed to open WebSoc
 |---|---|
 | Cards and columns created, edited, moved and deleted | Server events on a **presence channel** `presence-board.{id}` |
 | Who's online (avatar stack) | Presence channel membership (`here` / `joining` / `leaving`) |
-| Live cursors | Client **whispers** (`client-cursor`), throttled to about 20/s, never touch PHP |
+| Live cursors | Client **whispers** (`client-cursor`), throttled to about 20/s, never touch PHP. Anchored to the card or column under the pointer, so they land on the same card for everyone |
 | "Ada is editing" and "Ada is moving" badges | Whispers (`client-editing`, `client-dragging`) |
 | Who sent a whisper | The `user_id` Reverb adds to each one from the sender's channel auth, never the payload |
 | Activity feed | `activity.recorded` event, sent to everyone including the actor |
@@ -184,6 +184,22 @@ Events implement `ShouldBroadcastNow`. Queued broadcasts with several workers ca
 high-traffic deployment would use a single ordered queue, with the per-board sequence numbers catching anything that
 still arrived out of order.
 
+A broadcast that fails (Reverb is down) doesn't fail the request: by then the change has committed, and a 500 would
+make the client undo a change that happened. `BoardEvent::send()` reports the failure instead. The event's number is
+used up, so everyone else sees a gap and re-syncs once they can.
+
+### Losing a race cleanly
+A request that loses a race gets a clean answer rather than a 500. Adding or moving a card into a column someone has
+just deleted is a 404 ("That column was just deleted."), found when the column row is locked; two requests accepting
+the same invite at once (a double click) add one membership between them; a save that changes nothing doesn't bump
+the card's version, so it can't turn someone else's open edit into a conflict.
+
+### Live cursors across layouts
+People's layouts differ: text size, window height, a scrolled column. Board coordinates alone would put a cursor
+beside the card someone is pointing at, so each cursor whisper is anchored to what's under the pointer: the card (as
+fractions of its width and height) or the column (an offset from its corner), with board coordinates as the fallback.
+Each viewer places it against their own layout (`LiveCursors.vue`).
+
 ### Drag and drop on Pointer Events
 The native HTML5 drag API never fires for touch, so cards and columns are dragged with Pointer Events instead
 (`resources/js/lib/pointerDrag.js`), which covers mouse, touch and pen with one code path:
@@ -209,7 +225,13 @@ The native HTML5 drag API never fires for touch, so cards and columns are dragge
 - Every input has a label, card counts and description markers have text for screen readers, and small icon buttons
   have at least a 24×24 px target.
 - Escape, Cancel or a click outside ask before throwing away unsaved edits.
-- Board and column names are renamed through real buttons.
+- Board and column names are renamed through real buttons, and Enter or Escape puts focus back on the name.
+- A focused card keeps focus when someone else moves it to another column, and an Alt+Arrow move at the edge of the
+  board says why nothing moved.
+- On narrow screens the Activity panel overlays the board like a dialog: it takes focus, closes with Escape or a tap
+  on the backdrop, and hands focus back to its button.
+- Toasts announce errors assertively and everything else politely, stay up while hovered or focused, and have a
+  Dismiss button; errors stay longer.
 - Errors after the first load appear in a banner rather than leaving a stale board on screen without saying so: a
   failed resync offers Retry, and a refused channel connection offers Reload (it needs a fresh subscription). The
   banner clears once the channel is back. The board list, the app's start-up and the Share dialog also offer a retry
@@ -224,7 +246,7 @@ The native HTML5 drag API never fires for touch, so cards and columns are dragge
 ## Tests
 
 ```sh
-php artisan test          # 65 PHPUnit feature tests
+php artisan test          # 71 PHPUnit feature tests
 npm run test:e2e          # two headless browsers against a running app + Reverb (see below)
 ```
 
@@ -243,7 +265,9 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - cross-board validation;
   - the per-user API rate limit, and Reverb's message limit being configured with numbers (a string from `.env`
     made Reverb refuse every message);
-  - real `/broadcasting/auth` presence signing with the Reverb driver.
+  - real `/broadcasting/auth` presence signing with the Reverb driver;
+  - writes still succeeding, and the failure reported, with Reverb unreachable;
+  - losing races: a column deleted under a card add or move, a doubled invite accept, a save that changes nothing.
 - **End-to-end** (`tests/e2e/two-users.mjs`) drives two signed-in users in headless Edge/Chrome through `playwright-core`,
   using the installed browser so nothing is downloaded. It checks:
   - joining through an invite link, after being refused without one;
@@ -273,7 +297,11 @@ npm run test:e2e          # two headless browsers against a running app + Reverb
   - drags cancelled with Escape or by leaving the board, which send nothing and open nothing;
   - focus returning to a card moved from its own dialog;
   - a failed board list offering a retry that works;
-  - Reverb dropping most of a burst of 400 whispers from one connection.
+  - Reverb dropping most of a burst of 400 whispers from one connection;
+  - a live cursor landing on the same card for someone with larger text;
+  - focus kept on a card someone else moves, returned after renaming, and an edge move announced;
+  - an error toast announced urgently and dismissed;
+  - the phone-width Activity panel taking focus and closing with Escape or the backdrop.
 
   Set `E2E_URL` if the app isn't on `http://127.0.0.1:8000`, and `E2E_BROWSER_PATH` to use a Chromium binary other
   than an installed Edge or Chrome. Screenshots land in `storage/e2e/`.
